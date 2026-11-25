@@ -1,0 +1,13 @@
+#Wed Nov 25 19:43:44 IST 2026
+base.0=C\:\\Users\\HP 440W\\.config\\freebuff-desktop\\local-projects\\c025beee-9480-49b2-8595-3473120720b7\\android\\app\\build\\intermediates\\dex\\debug\\mergeExtDexDebug\\classes.dex
+base.1=C\:\\Users\\HP 440W\\.config\\freebuff-desktop\\local-projects\\c025beee-9480-49b2-8595-3473120720b7\\android\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
+base.2=C\:\\Users\\HP 440W\\.config\\freebuff-desktop\\local-projects\\c025beee-9480-49b2-8595-3473120720b7\\android\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\6\\classes.dex
+base.3=C\:\\Users\\HP 440W\\.config\\freebuff-desktop\\local-projects\\c025beee-9480-49b2-8595-3473120720b7\\android\\app\\build\\intermediates\\global_synthetics_dex\\debug\\generateDebugGlobalSynthetics\\classes.dex
+path.0=classes.dex
+path.1=0/classes.dex
+path.2=6/classes.dex
+path.3=classes.dex
+renamed.0=classes.dex
+renamed.1=classes2.dex
+renamed.2=classes3.dex
+renamed.3=classes4.dex

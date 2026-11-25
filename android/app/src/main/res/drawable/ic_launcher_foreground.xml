@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- microphone body -->
+    <path
+        android:fillColor="#E5B96F"
+        android:pathData="M54,30 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0" />
+    <path
+        android:fillColor="#E5B96F"
+        android:pathData="M48,30 h12 v24 a6,6 0 0,1 -12,0 z" />
+    <!-- cradle -->
+    <path
+        android:strokeColor="#E5B96F"
+        android:strokeWidth="4"
+        android:fillColor="#00000000"
+        android:pathData="M38,52 a16,16 0 0,0 32,0" />
+    <path
+        android:strokeColor="#E5B96F"
+        android:strokeWidth="4"
+        android:pathData="M54,68 V78" />
+    <!-- sound waves -->
+    <path
+        android:strokeColor="#8FA0B4"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M28,44 a34,34 0 0,0 0,26" />
+    <path
+        android:strokeColor="#8FA0B4"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M80,44 a34,34 0 0,1 0,26" />
+</vector>

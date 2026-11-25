@@ -1,0 +1,6 @@
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/lvs_core.dir
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/lvs_probe.dir
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/lvs_latencytest.dir
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/SoloWorshiper.dir
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/edit_cache.dir
+C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build/CMakeFiles/rebuild_cache.dir

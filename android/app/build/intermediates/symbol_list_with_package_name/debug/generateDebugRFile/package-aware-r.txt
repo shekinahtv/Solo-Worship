@@ -1,0 +1,4 @@
+com.soloworshiper.app
+color ic_launcher_bg
+drawable ic_launcher_foreground
+mipmap ic_launcher

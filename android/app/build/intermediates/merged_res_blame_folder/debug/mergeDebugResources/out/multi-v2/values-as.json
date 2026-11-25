@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.soloworshiper.app-mergeDebugResources-1:/values-as/values-as.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\HP 440W\\.gradle\\caches\\9.8.2\\transforms\\95aa197c644550a995f5180f8ea71930\\transformed\\core-1.9.0\\res\\values-as\\values-as.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "100",
+                        "endOffsets": "151"
+                    }
+                }
+            ]
+        }
+    ]
+}

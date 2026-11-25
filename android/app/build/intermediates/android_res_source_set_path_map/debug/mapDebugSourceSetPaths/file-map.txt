@@ -1,0 +1,8 @@
+com.soloworshiper.app-pngs-0 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\build\generated\res\pngs\debug
+com.soloworshiper.app-updated_navigation_xml-1 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\build\generated\updated_navigation_xml\debug
+com.soloworshiper.app-packageDebugResources-2 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.soloworshiper.app-packageDebugResources-3 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.soloworshiper.app-debug-4 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.soloworshiper.app-debug-5 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\src\debug\res
+com.soloworshiper.app-main-6 C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\android\app\src\main\res
+gradleHome-0 C:\Users\HP 440W\.gradle

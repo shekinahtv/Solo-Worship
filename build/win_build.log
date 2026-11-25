@@ -1,0 +1,8 @@
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/HP 440W/.config/freebuff-desktop/local-projects/c025beee-9480-49b2-8595-3473120720b7/build
+[1/2] Building CXX object CMakeFiles\SoloWorshiper.dir\src\app\Console.cpp.obj
+[2/2] Linking CXX executable SoloWorshiper.exe; Staging WebView2Loader.dll
+BUILD OK

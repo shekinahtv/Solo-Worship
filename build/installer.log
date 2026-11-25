@@ -1,0 +1,80 @@
+Using C:\Users\HP 440W\AppData\Local\Programs\Inno Setup 6\ISCC.exe
+Inno Setup 6 Command-Line Compiler
+Copyright (C) 1997-2026 Jordan Russell. All rights reserved.
+Portions Copyright (C) 2000-2026 Martijn Laan. All rights reserved.
+Portions Copyright (C) 2001-2004 Alex Yackimoff. All rights reserved.
+https://www.innosetup.com
+
+Compiler engine version: Inno Setup 6.7.4
+Non-commercial use only
+
+Preprocessing
+   Reading file: C:\Users\HP 440W\AppData\Local\Programs\Inno Setup 6\ISPPBuiltins.iss
+Parsing [Setup] section, line 13
+Parsing [Setup] section, line 14
+Parsing [Setup] section, line 15
+Parsing [Setup] section, line 16
+Parsing [Setup] section, line 17
+Parsing [Setup] section, line 18
+Parsing [Setup] section, line 19
+Parsing [Setup] section, line 20
+Parsing [Setup] section, line 21
+Parsing [Setup] section, line 22
+Parsing [Setup] section, line 23
+Parsing [Setup] section, line 24
+Parsing [Setup] section, line 25
+Parsing [Setup] section, line 26
+Parsing [Setup] section, line 27
+Parsing [Setup] section, line 28
+Parsing [Setup] section, line 29
+Parsing [Setup] section, line 30
+Parsing [Setup] section, line 32
+Parsing [Setup] section, line 33
+Reading file (WizardImageFile)
+Reading file (WizardSmallImageFile)
+Preparing Setup program executable
+   Verification successful
+   Updating icons (Setup.e32)
+   Updating version info (Setup.e32)
+Determining language code pages
+Parsing [Languages] section, line 36
+   Reading file: C:\Users\HP 440W\AppData\Local\Programs\Inno Setup 6\Default.isl
+   Messages in script file
+Reading default messages from Default.isl
+Parsing [Languages] section, line 36
+   Reading file: C:\Users\HP 440W\AppData\Local\Programs\Inno Setup 6\Default.isl
+Parsing [LangOptions], [Messages], and [CustomMessages] sections
+   Messages in script file
+Reading [Code] section
+Parsing [Tasks] section, line 39
+Parsing [Icons] section, line 48
+Parsing [Icons] section, line 49
+Parsing [Icons] section, line 50
+Parsing [UninstallDelete] section, line 58
+Parsing [Run] section, line 53
+Parsing [Files] section, line 42
+Parsing [Files] section, line 43
+Parsing [Files] section, line 44
+Parsing [Files] section, line 45
+Compiling [Code] section
+Deleting SoloWorshiperSetup-1.0.0.exe from output directory
+Creating setup files
+   Verification successful
+   Updating icons (Setup.exe)
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\build\SoloWorshiper.exe
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\build\WebView2Loader.dll
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\README.md
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\ARCHITECTURE.md
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\BUILD.md
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\console.png
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\ROUTING.md
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\TESTING.md
+   Compressing: C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\installer\..\docs\TROUBLESHOOTING.md
+   Compressing Setup program executable
+   Updating version info (Setup.exe)
+   Updating manifest (Setup.exe)
+
+
+Successful compile (2.188 sec). Resulting Setup program filename is:
+C:\Users\HP 440W\.config\freebuff-desktop\local-projects\c025beee-9480-49b2-8595-3473120720b7\dist\SoloWorshiperSetup-1.0.0.exe
+INSTALLER OK - see dist\
