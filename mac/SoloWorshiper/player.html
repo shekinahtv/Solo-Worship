@@ -1,0 +1,75 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solo Worshiper</title>
+<style>
+  html, body { margin:0; height:100%; background:#08090B; overflow:hidden; }
+  #player { position:absolute; inset:0; width:100%; height:100%; }
+  #fallback { position:absolute; inset:0; display:none; align-items:center;
+              justify-content:center; color:#6A7380; font:14px sans-serif;
+              text-align:center; padding:24px; }
+</style>
+</head><body>
+<div id="player"></div>
+<div id="fallback">The YouTube player could not start.<br>Check the connection, or open the link
+in your browser.</div>
+<script>
+  var player = null, ready = false;
+  function onYouTubeIframeAPIReady() {
+    player = new YT.Player('player', {
+      width: '100%', height: '100%',
+      playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1,
+                    origin: location.origin, enablejsapi: 1 },
+      events: {
+        onReady: function (e) {
+          ready = true;
+          document.getElementById('fallback').style.display = 'none';
+          e.target.playVideo();
+        },
+        onStateChange: function (e) {
+          // A player that is playing or buffering is working: never cover it.
+          if (e.data === 1 || e.data === 3) {
+            document.getElementById('fallback').style.display = 'none';
+          }
+        },
+        onError: function (e) {
+          // Report only a failure that actually stops playback.
+          if (ready) {
+            try {
+              if (player && (player.getPlayerState() === 1 || player.getPlayerState() === 3)) return;
+            } catch (ignored) { }
+          }
+          document.getElementById('fallback').style.display = 'flex';
+        }
+      }
+    });
+  }
+  // Called from the app: load a specific video.
+  window.loadVideo = function (id) {
+    if (!player) return;
+    if (ready) { player.loadVideoById(id); }
+  };
+  window.play = function () { if (ready) player.playVideo(); };
+  window.pause = function () { if (ready) player.pauseVideo(); };
+  window.toggle = function () {
+    if (!player || !ready) return;
+    if (player.getPlayerState() === 1) player.pauseVideo(); else player.playVideo();
+  };
+  // Called from the app: position | duration | playing | state | title
+  window.state = function () {
+    if (!player || !ready) return '';
+    try {
+      var d = player.getVideoData() || {};
+      return (player.getCurrentTime() || 0) + '|' + (player.getDuration() || 0) + '|' +
+             (player.getPlayerState() === 1 ? 1 : 0) + '|' + player.getPlayerState() + '|' +
+             (d.title || '').replace(/\|/g, ' ');
+    } catch (e) { return ''; }
+  };
+  var tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = function () {
+    document.getElementById('fallback').style.display = 'flex';
+  };
+  document.head.appendChild(tag);
+</script>
+</body></html>

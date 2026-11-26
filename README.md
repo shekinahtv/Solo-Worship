@@ -90,6 +90,28 @@ platform limit, not a missing feature that the UI hides.
 
 Build and install steps are in [`android/README.md`](android/README.md).
 
+## macOS
+
+`mac\` is a native SwiftUI/AppKit application for macOS 13 and newer, built for
+Apple silicon and Intel Macs. It carries the same ordered queue: a YouTube video
+or playlist link fills it (the playlist is read from its public listing) and
+plays in the official embed inside a `WKWebView`; `ADD FILES` appends local audio
+and video, played by the app's own `AVPlayer`. `MIC` runs the same monitoring
+chain as Android — 80 Hz high pass, three-band EQ, compressor, reverb send, soft
+limiter — on `AVAudioEngine` with a live input meter.
+
+The macOS build does what the other platforms cannot: its `IN` and `OUT` pickers
+list **every** audio device CoreAudio has loaded — the built-in output, an onboard
+codec, a USB interface such as a Focusrite, virtual devices — and selecting one
+reopens the microphone path on it. It still does not mix another application's
+audio into the vocal path (macOS exposes no such capture) and it does not record.
+
+Build and verify steps are in [`mac/README.md`](mac/README.md):
+
+```bash
+cd mac && ./build.sh && open build/SoloWorshiper.app
+```
+
 ## Latency, honestly
 
 Measured on the reference machine (Focusrite Scarlett 2i2 Gen 2, Windows 11,
@@ -131,6 +153,7 @@ src/
   core/Settings.cpp     device + UI settings in %APPDATA%
     web/PlaylistFetch.cpp playlist listing (public page, no API key)
   web/YouTubeHost.cpp   WebView2 host, URL parsing, oEmbed title, title polling
+mac/                    macOS build (Swift, SwiftUI, AVAudioEngine, WKWebView)
 android/                phone and tablet build (Java, Media3, WebView embed)
 dist/                   the Windows setup program and the Android APK
 tools/
