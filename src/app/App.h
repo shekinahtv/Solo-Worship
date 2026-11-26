@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "audio/Engine.h"
+#include "audio/Wasapi.h"
 #include "core/Presets.h"
 #include "core/Queue.h"
 #include "core/Settings.h"
@@ -94,6 +95,7 @@ struct Popup {
   std::vector<std::string> items;
   std::vector<int> ids; // action ids or param indices
   int selected = 0;
+  float scroll = 0.0f; // pixels scrolled when the list is longer than the window allows
 };
 
 class App {
@@ -148,6 +150,9 @@ public:
   void openSettings();
   void closeOverlay();
   void applyDeviceConfig();
+  // Endpoint enumeration is expensive (one IAudioClient activation per device),
+  // so the lists are cached and refreshed on demand instead of per painted frame.
+  void refreshDevices(bool force = false);
   void buildSelectPopup(int owner);
   void selectItem(int id);
   void beginPlaylistLoad(const std::string& listId, const std::string& startVideoId);
@@ -190,6 +195,12 @@ private:
   bool overlayHelp_ = false;
   bool showPopup_ = false;
   Popup popup_;
+
+  // Cached endpoint lists. Enumeration must never run from the paint path.
+  std::vector<au::Endpoint> captureDevices_;
+  std::vector<au::Endpoint> renderDevices_;
+  std::wstring defaultRenderId_;
+  double devicesLoadedAt_ = -1.0;
 
   std::wstring status_;
   std::wstring errorText_;

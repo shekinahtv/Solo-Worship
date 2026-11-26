@@ -157,6 +157,7 @@ bool App::init(HINSTANCE hinst) {
   engine_.params().capture(slotA_.data());
   engine_.params().capture(slotB_.data());
 
+  refreshDevices(true);
   startEngine();
   logLine("init: engine start attempted");
 
@@ -217,6 +218,17 @@ void App::restartEngine() {
   SettingsStore::save(settings_);
 }
 
+void App::refreshDevices(bool force) {
+  const double now = nowSeconds();
+  // A short window keeps a clicked-open dropdown from re-enumerating while it
+  // is already populated from the same click.
+  if (!force && devicesLoadedAt_ >= 0.0 && now - devicesLoadedAt_ < 3.0) return;
+  captureDevices_ = au::List(eCapture);
+  renderDevices_ = au::List(eRender);
+  defaultRenderId_ = au::DefaultId(eRender);
+  devicesLoadedAt_ = now;
+}
+
 void App::applyDeviceConfig() {
   EngineConfig cfg = settings_.engine;
   if (cfg.useAsio && cfg.asioClsid.empty()) cfg.asioClsid = Engine::SuggestAsioClsid();
@@ -239,6 +251,28 @@ void App::applyDeviceConfig() {
   }
   settings_.engine = engine_.config();
   SettingsStore::save(settings_);
+  // Opening a stream can change which endpoints Windows reports as active.
+  refreshDevices(true);
+
+  // The render stream can start while the capture stream quietly fails (a
+  // disabled or unplugged microphone), which used to look like a working app
+  // with a dead mic. Give the capture thread a moment, then say so.
+  if (settings_.engine.captureEnabled && !settings_.engine.useAsio) {
+    Sleep(300);
+    if (!engine_.stats().captureOpen) {
+      std::wstring name = L"the selected input";
+      for (const auto& e : captureDevices_)
+        if (e.id == settings_.engine.captureId) {
+          name = e.name;
+          if (!(e.state & DEVICE_STATE_ACTIVE))
+            name += (e.state & DEVICE_STATE_DISABLED) ? L" (disabled)" : L" (not plugged in)";
+        }
+      errorText_ = L"Input could not be opened: " + name +
+                   L". Choose another input, or enable it in Windows Sound settings.";
+      errorUntil_ = nowSeconds() + 15.0;
+      logLine("engine: selected capture endpoint could not be opened");
+    }
+  }
 }
 
 void App::loadPreset(int index) {
@@ -328,6 +362,7 @@ void App::openRecordFolder() {
 }
 
 void App::openSettings() {
+  refreshDevices(true);
   overlaySettings_ = true;
   showPopup_ = false;
   popup_.open = false;
@@ -561,25 +596,50 @@ void App::buildSelectPopup(int owner) {
     popup_.ids.push_back(id);
   };
 
+  // Every installed endpoint is listed. Ones Windows cannot open stay
+  // selectable but are labelled, so a choice is never silently dead.
+  auto deviceLabel = [](const au::Endpoint& e) {
+    std::string s = json::Value::toUtf8(e.name);
+    if (e.state & DEVICE_STATE_ACTIVE) return s;
+    s += (e.state & DEVICE_STATE_DISABLED) ? "  (disabled)" : "  (not plugged in)";
+    return s;
+  };
+  auto anyActive = [](const std::vector<au::Endpoint>& v) {
+    for (auto& e : v)
+      if (e.state & DEVICE_STATE_ACTIVE) return true;
+    return false;
+  };
+  // Ids are explicit device indices: list position must never depend on how
+  // many fixed items were added before the devices.
+  auto addDevices = [&](const std::vector<au::Endpoint>& devs, const char* noneText,
+                        const char* inactiveText) {
+    if (devs.empty()) {
+      add(noneText, -1);
+      return;
+    }
+    if (!anyActive(devs)) add(inactiveText, -1);
+    for (size_t i = 0; i < devs.size(); ++i) add(deviceLabel(devs[i]), 10000 + (int)i);
+  };
+
   if (owner == A_SELECT_ASIO) {
     add("WASAPI (Windows audio)", -1);
-    for (auto& d : Engine::ListAsioDrivers())
-      add(narrow(d.first), (int)(10000 + (int)popup_.items.size()));
+    auto drivers = Engine::ListAsioDrivers();
+    for (size_t i = 0; i < drivers.size(); ++i) add(narrow(drivers[i].first), 10000 + (int)i);
     // Selecting an ASIO entry is resolved in selectItem via the item index.
   } else if (owner == A_SELECT_CAPTURE) {
-    auto devs = au::List(eCapture);
-    if (devs.empty()) add("(no capture devices found)", -1);
-    for (auto& e : devs) add(narrow(e.name), 10000 + (int)popup_.items.size());
+    refreshDevices();
+    addDevices(captureDevices_, "(no capture devices found)",
+               "(no active input - enable one in Windows Sound settings)");
   } else if (owner == A_SELECT_RENDER) {
-    auto devs = au::List(eRender);
-    if (devs.empty()) add("(no output devices found)", -1);
-    for (auto& e : devs) add(narrow(e.name), 10000 + (int)popup_.items.size());
+    refreshDevices();
+    addDevices(renderDevices_, "(no output devices found)",
+               "(no active output - enable one in Windows Sound settings)");
   } else if (owner == A_SELECT_LOOPBACK) {
     add("System default (follow Windows)", -2);
     add("None", -1);
-    auto devs = au::List(eRender);
-    if (devs.empty()) add("(no output devices found)", -1);
-    for (auto& e : devs) add(narrow(e.name), 10000 + (int)popup_.items.size());
+    refreshDevices();
+    addDevices(renderDevices_, "(no output devices found)",
+               "(no active output - enable one in Windows Sound settings)");
   } else if (owner == A_SELECT_RATE) {
     for (int r : {44100, 48000, 88200, 96000}) add(std::to_string(r) + " Hz", r);
   } else if (owner == A_SELECT_BUFFER) {
@@ -621,20 +681,22 @@ void App::selectItem(int id) {
       }
     }
   } else if (owner == A_SELECT_CAPTURE) {
-    auto list = au::List(eCapture);
+    refreshDevices();
     const int idx = id - 10000;
-    if (idx >= 0 && idx < (int)list.size()) {
-      settings_.engine.captureId = list[idx].id;
-      settings_.engine.captureChannels = (int)list[idx].channels;
+    if (idx >= 0 && idx < (int)captureDevices_.size()) {
+      const au::Endpoint& e = captureDevices_[idx];
+      settings_.engine.captureId = e.id;
+      if (e.channels > 0) settings_.engine.captureChannels = (int)e.channels;
       settings_.engine.captureChannel =
-          std::min(settings_.engine.captureChannel, std::max(0, (int)list[idx].channels - 1));
+          std::min(settings_.engine.captureChannel, std::max(0, (int)e.channels - 1));
     }
   } else if (owner == A_SELECT_RENDER) {
-    auto list = au::List(eRender);
+    refreshDevices();
     const int idx = id - 10000;
-    if (idx >= 0 && idx < (int)list.size()) {
-      settings_.engine.renderId = list[idx].id;
-      settings_.engine.deviceChannels = (int)list[idx].channels;
+    if (idx >= 0 && idx < (int)renderDevices_.size()) {
+      const au::Endpoint& e = renderDevices_[idx];
+      settings_.engine.renderId = e.id;
+      if (e.channels > 0) settings_.engine.deviceChannels = (int)e.channels;
     }
   } else if (owner == A_SELECT_LOOPBACK) {
     if (id == -2) {
@@ -644,11 +706,11 @@ void App::selectItem(int id) {
       settings_.engine.loopbackFollowDefault = false;
       settings_.engine.loopbackId.clear();
     } else {
-      auto list = au::List(eRender);
+      refreshDevices();
       const int idx = id - 10000;
-      if (idx >= 0 && idx < (int)list.size()) {
+      if (idx >= 0 && idx < (int)renderDevices_.size()) {
         settings_.engine.loopbackFollowDefault = false;
-        settings_.engine.loopbackId = list[idx].id;
+        settings_.engine.loopbackId = renderDevices_[idx].id;
       }
     }
   } else if (owner == A_SELECT_RATE) {
@@ -657,10 +719,15 @@ void App::selectItem(int id) {
     settings_.engine.bufferFrames = id;
   } else if (owner == A_SELECT_INPUT_CH) {
     settings_.engine.captureChannel = id;
+    SettingsStore::save(settings_);
   } else if (owner == A_SELECT_OUT_L) {
     settings_.engine.outLeft = id;
+    // Routing used to live only in memory, so the menu appeared to do nothing
+    // after a restart.
+    SettingsStore::save(settings_);
   } else if (owner == A_SELECT_OUT_R) {
     settings_.engine.outRight = id;
+    SettingsStore::save(settings_);
   } else if (owner == A_REV_TYPE) {
     params().set(P::RevType, (float)id);
     return;
@@ -1075,6 +1142,16 @@ void App::pasteIntoField() {
 }
 
 void App::onWheel(float x, float y, float delta) {
+  // An open dropdown owns the wheel: long endpoint lists have to be reachable.
+  if (popup_.open) {
+    const float itemH = 24.0f;
+    const float contentH = itemH * popup_.items.size() + 8.0f;
+    const float maxH = std::min(340.0f, std::max(140.0f, gfx_.height() - 140.0f));
+    const float viewH = std::min(maxH, contentH) - 8.0f;
+    const float maxScroll = std::max(0.0f, contentH - 8.0f - viewH);
+    popup_.scroll = std::clamp(popup_.scroll - delta * 48.0f, 0.0f, maxScroll);
+    return;
+  }
   if (overlayQueue_) {
     const float maxScroll = std::max(0.0f, queueContentH_ - queueViewH_);
     queueScroll_ = std::clamp(queueScroll_ - delta * 40.0f, 0.0f, maxScroll);

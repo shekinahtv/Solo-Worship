@@ -84,8 +84,12 @@ static void Describe(IMMDevice* dev, Endpoint& ep) {
     PropVariantClear(&v);
     props->Release();
   }
+  // Only active endpoints can be opened. Activating IAudioClient on a ghost
+  // (unplugged / disabled) endpoint costs a driver round trip that can block
+  // for tens of milliseconds, and the list is walked on the UI thread.
   IAudioClient* client = nullptr;
-  if (SUCCEEDED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&client)) &&
+  if ((ep.state & DEVICE_STATE_ACTIVE) &&
+      SUCCEEDED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&client)) &&
       client) {
     WAVEFORMATEX* fmt = nullptr;
     if (SUCCEEDED(client->GetMixFormat(&fmt)) && fmt) {

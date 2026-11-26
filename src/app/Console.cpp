@@ -751,9 +751,12 @@ void App::drawMaster(D2D1_RECT_F outer) {
   drawSelect(gfx_, mainR, pair, false, false);
   addHit(kActionBase + A_SELECT_OUT_L, mainR, 3);
 
+  // The second selector drives the right output channel; it used to show a
+  // fixed "PHONES" label, so a change there was invisible.
+  char pairR[32];
+  snprintf(pairR, sizeof(pairR), "OUT %d", settings_.engine.outRight + 1);
   D2D1_RECT_F monR = R(mainR.right + 6, y, inner.right, y + 22);
-  const int deviceCh = std::max(2, settings_.engine.deviceChannels);
-  drawSelect(gfx_, monR, deviceCh > 2 ? "PHONES 3/4" : "PHONES", false, false);
+  drawSelect(gfx_, monR, pairR, false, false);
   addHit(kActionBase + A_SELECT_OUT_R, monR, 3);
 
   y += 28.0f;
@@ -841,26 +844,49 @@ void App::drawStatusBar(D2D1_RECT_F r) {
 void App::drawPopup() {
   if (!popup_.open || popup_.items.empty()) return;
   const float itemH = 24.0f;
-  const float listH = std::min(280.0f, itemH * popup_.items.size() + 8.0f);
+  const float contentH = itemH * popup_.items.size() + 8.0f;
+  // A machine can report a dozen or more endpoints; the list must fit on screen
+  // and stay scrollable, otherwise later entries can never be picked.
+  const float maxH = std::min(340.0f, std::max(140.0f, gfx_.height() - 140.0f));
+  const float listH = std::min(maxH, contentH);
   D2D1_RECT_F anchor = popup_.anchor;
+  // Device names are long ("Microphone (High Definition Audio Device)"), so the
+  // list is wider than the compact parameter menus used to need.
+  const float listW = std::min(360.0f, gfx_.width() - 40.0f);
   float lx = anchor.left;
   float ly = anchor.bottom + 4;
-  if (lx + 260 > gfx_.width()) lx = gfx_.width() - 264;
+  if (lx + listW > gfx_.width() - 8) lx = gfx_.width() - listW - 8;
   if (ly + listH > gfx_.height() - 40) ly = anchor.top - listH - 4;
-  D2D1_RECT_F listR = R(lx, ly, lx + 260, ly + listH);
+  if (ly < 8) ly = 8;
+  D2D1_RECT_F listR = R(lx, ly, lx + listW, ly + listH);
+  const float viewTop = listR.top + 4;
+  const float viewBottom = listR.bottom - 4;
+  const float maxScroll = std::max(0.0f, contentH - 8.0f - (viewBottom - viewTop));
+  popup_.scroll = std::clamp(popup_.scroll, 0.0f, maxScroll);
   gfx_.shadow(listR, 6.0f, 10.0f);
   gfx_.roundRect(listR, 6.0f, T.panelTop);
   gfx_.roundRectOutline(listR, 6.0f, T.stroke, 1.0f);
-  float iy = listR.top + 4;
+  float iy = viewTop - popup_.scroll;
   for (size_t i = 0; i < popup_.items.size(); ++i) {
-    if (iy + itemH > listR.bottom) break;
     D2D1_RECT_F ir = R(listR.left + 4, iy, listR.right - 4, iy + itemH);
-    const bool sel = (int)i == popup_.selected;
-    if (sel) gfx_.roundRect(ir, 4.0f, rgba(0xE5B96F, 0.16f));
-    gfx_.text(W(popup_.items[i]), R(ir.left + 8, ir.top, ir.right - 8, ir.bottom),
-              sel ? T.accent : T.text, F_SMALL, AL_LEFT, true);
-    addHit(9000 + (int)i, ir, 6, (int)i);
+    if (ir.bottom > viewTop && ir.top < viewBottom) {
+      const bool sel = (int)i == popup_.selected;
+      if (sel) gfx_.roundRect(ir, 4.0f, rgba(0xE5B96F, 0.16f));
+      gfx_.text(W(popup_.items[i]), R(ir.left + 8, ir.top, ir.right - 8, ir.bottom),
+                sel ? T.accent : T.text, F_SMALL, AL_LEFT, true);
+      // Only fully visible rows are clickable, so a hit never targets a
+      // half-clipped entry.
+      if (ir.top >= viewTop && ir.bottom <= viewBottom) addHit(9000 + (int)i, ir, 6, (int)i);
+    }
     iy += itemH;
+  }
+  if (maxScroll > 0.0f) {
+    const float trackH = viewBottom - viewTop;
+    const float thumbH = std::max(24.0f, trackH * trackH / (contentH - 8.0f));
+    const float t = maxScroll > 0.0f ? popup_.scroll / maxScroll : 0.0f;
+    gfx_.roundRect(R(listR.right - 5, viewTop + t * (trackH - thumbH), listR.right - 2,
+                     viewTop + t * (trackH - thumbH) + thumbH),
+                   1.5f, rgba(0xE5B96F, 0.5f));
   }
 }
 
@@ -952,8 +978,6 @@ void App::drawQueuePanel() {
 }
 
 void App::drawOverlays() {
-  drawPopup();
-
   if (overlayQueue_) drawQueuePanel();
 
   if (overlaySettings_) {
@@ -995,6 +1019,10 @@ void App::drawOverlays() {
     gfx_.text(status_, R(toast.left + 14, toast.top, toast.right - 14, toast.bottom), T.dim,
               F_SMALL, AL_CENTER, true);
   }
+
+  // Last, so a dropdown is drawn on top of the panel that opened it: hitAt()
+  // returns the topmost widget, and the panel used to swallow every click.
+  drawPopup();
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,19 +1059,29 @@ void App::drawSettingsPanel(D2D1_RECT_F panel) {
   }
   row("AUDIO DRIVER", A_SELECT_ASIO, asioName, in.left, y, colW);
 
+  // These lists are cached by App::refreshDevices: enumerating endpoints here
+  // would activate an IAudioClient per device on every painted frame and
+  // freeze the window.
+  auto stateTag = [](const au::Endpoint& e) -> std::string {
+    if (e.state & DEVICE_STATE_ACTIVE) return {};
+    return (e.state & DEVICE_STATE_DISABLED) ? " (disabled)" : " (not plugged in)";
+  };
+
   std::string inputName = "(none)";
-  for (auto& e : au::List(eCapture))
-    if (e.id == settings_.engine.captureId) inputName = json::Value::toUtf8(e.name);
+  for (auto& e : captureDevices_)
+    if (e.id == settings_.engine.captureId)
+      inputName = json::Value::toUtf8(e.name) + stateTag(e);
   row("WASAPI INPUT", A_SELECT_CAPTURE, inputName, in.left, y + 52.0f, colW);
 
   std::string outputName = "(default)";
-  for (auto& e : au::List(eRender))
-    if (e.id == settings_.engine.renderId) outputName = json::Value::toUtf8(e.name);
+  for (auto& e : renderDevices_)
+    if (e.id == settings_.engine.renderId)
+      outputName = json::Value::toUtf8(e.name) + stateTag(e);
   row("WASAPI OUTPUT", A_SELECT_RENDER, outputName, in.left, y + 104.0f, colW);
 
   std::string loopName = "(none)";
-  const std::wstring defaultRender = au::DefaultId(eRender);
-  for (auto& e : au::List(eRender)) {
+  const std::wstring defaultRender = defaultRenderId_;
+  for (auto& e : renderDevices_) {
     if (settings_.engine.loopbackFollowDefault && e.id == defaultRender)
       loopName = json::Value::toUtf8(e.name) + "  (default)";
     else if (!settings_.engine.loopbackFollowDefault && e.id == settings_.engine.loopbackId)
@@ -1079,12 +1117,12 @@ void App::drawSettingsPanel(D2D1_RECT_F panel) {
   char info[512];
   snprintf(info, sizeof(info),
            "RUNNING: %s   %d Hz   %d frames   in %.1f ms / out %.1f ms   %s\n"
-           "BUFFER-LATENCY %.1f ms   STREAM %.1f ms   DEVICE CHANNELS %d   DROPOUTS %d",
+           "BUFFER-LATENCY %.1f ms   STREAM %.1f ms   DEVICE CHANNELS %d   DROPOUTS %d   %s",
            st.asio ? "ASIO" : (st.exclusive ? "WASAPI EXCLUSIVE" : "WASAPI SHARED"), st.sampleRate,
            st.bufferFrames, st.asio ? st.asioInputLatencyMs : st.streamLatencyMs,
            st.asio ? st.asioOutputLatencyMs : st.streamLatencyMs,
            st.running ? "ENGINE ACTIVE" : "ENGINE STOPPED", st.bufferLatencyMs, st.streamLatencyMs,
-           st.deviceChannels, st.dropouts);
+           st.deviceChannels, st.dropouts, st.captureOpen ? "MIC OPEN" : "MIC CLOSED");
   gfx_.roundRect(R(in.left, y + 236.0f, in.right, y + 286.0f), 6.0f, rgba(0x0E1114, 0.9f));
   gfx_.text(info, R(in.left + 10, y + 240.0f, in.right - 10, y + 282.0f), T.dim, F_TINY, AL_LEFT);
 
