@@ -135,7 +135,8 @@ struct ConsoleView: View {
     private var queue: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(Array(model.items.enumerated()), id: \.element.id) { index, song in
+                ForEach(model.items.indices, id: \.self) { index in
+                    let song = model.items[index]
                     HStack(spacing: 8) {
                         Text("\(index + 1)")
                             .font(.system(size: 11))
