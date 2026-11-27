@@ -33,6 +33,7 @@ fi
 echo "Building $TARGET (${#SOURCES[@]} sources)"
 swiftc \
   -O -parse-as-library \
+  -swift-version 5 \
   -target "$TARGET" \
   -framework AppKit \
   -framework AVFoundation \

@@ -1,4 +1,6 @@
+import AppKit
 import AVFoundation
+import QuartzCore
 import SwiftUI
 import WebKit
 

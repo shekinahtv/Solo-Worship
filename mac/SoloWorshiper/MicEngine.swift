@@ -198,8 +198,9 @@ final class MicEngine {
             }
             ring.write(base, count)
         }
+        let captured = blockPeak
         peakLock.withLock { state in
-            state = max(blockPeak, state * 0.86)
+            state = max(captured, state * 0.86)
         }
     }
 }
