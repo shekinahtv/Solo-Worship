@@ -4,12 +4,18 @@
 #
 #   ./build.sh          build into mac/build/SoloWorshiper.app
 #   open build/SoloWorshiper.app
+#
+# Two environment variables let one host build for another architecture, which
+# is how the release workflow makes a universal bundle:
+#
+#   LVS_ARCH=x86_64 ./build.sh          target architecture (default: this host)
+#   LVS_OUT=build/x/SoloWorshiper.app   output bundle (default: build/SoloWorshiper.app)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="build/SoloWorshiper.app"
+APP="${LVS_OUT:-build/SoloWorshiper.app}"
 BIN="$APP/Contents/MacOS/SoloWorshiper"
-TARGET="$(uname -m)-apple-macos13.0"
+TARGET="${LVS_ARCH:-$(uname -m)}-apple-macos13.0"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

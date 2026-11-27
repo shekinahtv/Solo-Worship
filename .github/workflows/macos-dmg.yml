@@ -1,0 +1,89 @@
+name: macOS DMG
+
+# Builds mac/ with its own build.sh, combines the two architectures into one
+# universal bundle, packages a .dmg and attaches it to the run.
+#
+# Run it from Actions -> "macOS DMG" -> Run workflow, or push a tag:
+#   git tag v1.0.0 && git push origin v1.0.0
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    name: Universal .app and .dmg
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcrun --sdk macosx --show-sdk-version
+          swiftc --version
+
+      - name: Build arm64 bundle
+        working-directory: mac
+        run: LVS_ARCH=arm64 LVS_OUT=build/arm64/SoloWorshiper.app ./build.sh
+
+      - name: Build x86_64 bundle
+        working-directory: mac
+        run: LVS_ARCH=x86_64 LVS_OUT=build/x86_64/SoloWorshiper.app ./build.sh
+
+      - name: Combine into one universal bundle
+        working-directory: mac
+        run: |
+          set -euo pipefail
+          ARM=build/arm64/SoloWorshiper.app
+          INTEL=build/x86_64/SoloWorshiper.app
+          APP=build/universal/SoloWorshiper.app
+          rm -rf "$APP"
+          mkdir -p "$(dirname "$APP")"
+          cp -R "$ARM" "$APP"
+          lipo -create \
+            -output "$APP/Contents/MacOS/SoloWorshiper" \
+            "$ARM/Contents/MacOS/SoloWorshiper" \
+            "$INTEL/Contents/MacOS/SoloWorshiper"
+          echo "architectures: $(lipo -archs "$APP/Contents/MacOS/SoloWorshiper")"
+          # Ad-hoc signature: enough for the app to launch and to ask for the
+          # microphone. Gatekeeper still warns because there is no Developer ID.
+          codesign --force --sign - "$APP"
+          codesign --verify --deep --strict "$APP" && echo "signature verified"
+
+      - name: Package DMG
+        working-directory: mac
+        run: ./package_dmg.sh build/universal/SoloWorshiper.app build/SoloWorshiper-1.0.0.dmg
+
+      - name: Mount check
+        working-directory: mac
+        run: |
+          set -euo pipefail
+          hdiutil attach build/SoloWorshiper-1.0.0.dmg -nobrowse -readonly -mountpoint "$RUNNER_TEMP/mnt" >/dev/null
+          ls "$RUNNER_TEMP/mnt"
+          test -x "$RUNNER_TEMP/mnt/SoloWorshiper.app/Contents/MacOS/SoloWorshiper"
+          test -L "$RUNNER_TEMP/mnt/Applications"
+          hdiutil detach "$RUNNER_TEMP/mnt" >/dev/null
+          echo "image mounts and carries the bundle"
+
+      - name: Checksum
+        working-directory: mac
+        run: shasum -a 256 build/SoloWorshiper-1.0.0.dmg | tee build/SoloWorshiper-1.0.0.dmg.sha256
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoloWorshiper-macos-dmg
+          path: |
+            mac/build/SoloWorshiper-1.0.0.dmg
+            mac/build/SoloWorshiper-1.0.0.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30

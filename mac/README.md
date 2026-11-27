@@ -98,6 +98,34 @@ mac/SoloWorshiper/
   Info.plist                     bundle metadata and microphone usage string
 ```
 
+## Building a .dmg without a Mac
+
+`.github/workflows/macos-dmg.yml` runs on a `macos-15` runner, so the `.dmg` can be
+produced from this Windows repository. It builds both architectures, combines them
+with `lipo`, ad-hoc signs the bundle, packages the image with `./package_dmg.sh`
+and uploads `SoloWorshiper-1.0.0.dmg` plus its SHA-256 as the artifact
+`SoloWorshiper-macos-dmg`.
+
+Trigger it either way:
+
+```bash
+# from the GitHub web UI: Actions -> macOS DMG -> Run workflow
+git tag v1.0.0 && git push origin v1.0.0      # or push a tag
+```
+
+Locally on a Mac the same two steps work:
+
+```bash
+./build.sh                                   # build/SoloWorshiper.app
+./package_dmg.sh                             # build/SoloWorshiper-1.0.0.dmg
+```
+
+The bundle is signed ad-hoc (`codesign --sign -`), which is enough to launch and to
+answer the microphone prompt, but it is **not** notarised: on another Mac the first
+launch needs right-click → Open, or `xattr -dr com.apple.quarantine` on the copied
+app. Removing that warning needs an Apple Developer ID certificate and
+`notarytool`, which this workflow does not have.
+
 ## Status of this build
 
 The sources and build script are complete and self-consistent, but they were
