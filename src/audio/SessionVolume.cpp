@@ -123,7 +123,7 @@ bool applyPlayerVolume(float volume, bool mute, std::wstring* note) {
 
   if (note) {
     wchar_t buf[128];
-    swprintf(buf, 128, L"session volume: %d of %d player session(s) at %.0f%%%s", found, count,
+    swprintf(buf, 128, L"session volume: %d of %d player session(s) at %.1f%%%s", found, count,
              v * 100.0f, mute ? L" (muted)" : L"");
     *note = buf;
   }

@@ -105,6 +105,8 @@ AppSettings SettingsStore::load() {
     if (const auto* v = e->find("useAsio")) s.engine.useAsio = v->boolean(false);
     if (const auto* v = e->find("musicEnabled")) s.engine.musicEnabled = v->boolean(true);
     if (const auto* v = e->find("loopbackFollow")) s.engine.loopbackFollowDefault = v->boolean(true);
+    if (const auto* v = e->find("syncId")) s.engine.latencyCacheId = widen(v->string());
+    if (const auto* v = e->find("syncMs")) s.engine.latencyCacheMs = (double)v->f(0.0f);
   }
   if (const auto* v = root.find("recordFolder")) s.recordingFolder = widen(v->string());
   if (const auto* v = root.find("recordBits")) s.recordBits = v->i(24);
@@ -115,6 +117,10 @@ AppSettings SettingsStore::load() {
   if (const auto* v = root.find("videoTitle")) s.videoTitle = widen(v->string());
   if (const auto* v = root.find("fullscreenVideo")) s.fullscreenVideo = v->boolean(false);
   if (const auto* v = root.find("musicBus")) s.musicThroughBus = v->boolean(false);
+  if (const auto* v = root.find("recSyncMs")) s.recSyncMs = v->f(0.0f);
+  if (const auto* v = root.find("syncTrimMigrated")) s.syncTrimMigrated = v->boolean(false);
+  if (const auto* v = root.find("playbackRate")) s.playbackRate = (double)v->f(1.0f);
+  if (const auto* v = root.find("karaoke")) s.karaoke = v->boolean(false);
   if (const auto* v = root.find("windowScale")) s.windowScale = v->f(1.0f);
   return s;
 }
@@ -136,6 +142,8 @@ bool SettingsStore::save(const AppSettings& s) {
   e["useAsio"] = json::Value(s.engine.useAsio);
   e["musicEnabled"] = json::Value(s.engine.musicEnabled);
   e["loopbackFollow"] = json::Value(s.engine.loopbackFollowDefault);
+  e["syncId"] = json::Value(narrow(s.engine.latencyCacheId));
+  e["syncMs"] = json::Value(s.engine.latencyCacheMs);
   root["engine"] = e;
   root["recordFolder"] = json::Value(narrow(s.recordingFolder));
   root["recordBits"] = json::Value(s.recordBits);
@@ -146,6 +154,10 @@ bool SettingsStore::save(const AppSettings& s) {
   root["videoTitle"] = json::Value(narrow(s.videoTitle));
   root["fullscreenVideo"] = json::Value(s.fullscreenVideo);
   root["musicBus"] = json::Value(s.musicThroughBus);
+  root["recSyncMs"] = json::Value((double)s.recSyncMs);
+  root["syncTrimMigrated"] = json::Value(s.syncTrimMigrated);
+  root["playbackRate"] = json::Value(s.playbackRate);
+  root["karaoke"] = json::Value(s.karaoke);
   root["windowScale"] = json::Value((double)s.windowScale);
 
   FILE* f = _wfopen(AppPaths::settingsFile().c_str(), L"wb");

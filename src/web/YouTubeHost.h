@@ -30,6 +30,10 @@ public:
   void loadPlaylist(const std::string& listId, bool autoplay);
   void play();
   void pause();
+  // Tempo of the song while it plays. The value survives a track change: the
+  // page is navigated with it in the URL and applies it as soon as it is ready.
+  void setPlaybackRate(double rate);
+  double playbackRate() const { return rate_; }
   void seekTo(double seconds);
   void seekBy(double seconds);
   void nextVideo();
@@ -71,6 +75,7 @@ private:
   bool playing_ = false;
   int state_ = -1;
   bool autoplay_ = true;
+  double rate_ = 1.0;
 };
 
 } // namespace lvs

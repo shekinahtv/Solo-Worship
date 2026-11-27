@@ -23,6 +23,14 @@ low-latency audio engine, not a simulation.
   own Windows audio session, so the level you hear is the level the fader shows;
   the loopback copy of that audio feeds the `MUSIC CHANNEL` meter and the recording
   tap. `docs/ROUTING.md` explains exactly why this is split that way.
+* **Vocal cut**: `KARAOKE` turns the player's own audio into the backing track. The
+  player session is ducked to 0.2 % — a muted session stops rendering and the
+  loopback capture goes silent, so a mute would take the song with it — the
+  captured copy is scaled straight back up, and a spectral centre canceller removes
+  the voice before it reaches the meter, the monitor and the recording tap. It is
+  band-limited to 180 Hz – 9.5 kHz so kick and bass are untouched, and *Settings →
+  VOCAL CUT DEPTH* sets how much of the centre is taken (default 100 %). Measured on
+  a real take: −84 % vocal band, −97 % presence, −8.5 % bass, −1 % kick.
 * **Recording**: 24-bit or 32-bit float WAV of either the vocal bus or the full
   master mix, straight to `Documents\Music\Solo Worshiper`.
 * **Presets**: 8 vocal chains, 7 reverb settings and 5 EQ shapes, all recallable
@@ -75,7 +83,8 @@ cleanly. Uninstall removed the Start Menu entry and the installed files; it left
 ## Android (phones and tablets)
 
 `android\` is a separate application for Android 8.0 and newer
-(`dist\SoloWorshiper-Android-1.0.0.apk`, package `com.soloworshiper.app`). It carries
+(`dist\SoloWorshiper-Android-1.0.0.apk`, package `com.soloworshiper.app`, signed
+with the release key in `android/release.keystore`). It carries
 the same ordered queue as the console: paste a YouTube video or playlist link and
 the songs appear with the current one and `UP NEXT`, with previous, next and
 tap-to-jump; local audio and video files added with `ADD FILES` join that same
@@ -124,6 +133,18 @@ Measured on the reference machine (Focusrite Scarlett 2i2 Gen 2, Windows 11,
 | Round trip, estimated | ~17.1 ms | driver latency + one buffer each way, shown in the title bar |
 | WASAPI exclusive | 80 ms (3528 frames) | buffer size the driver actually grants |
 | WASAPI shared | 22 ms (970 frames) | buffer size the driver actually grants |
+
+### Record alignment is automatic
+
+The recording tap mixes the microphone with the loopback copy of the song, and that
+copy is one measured song-path behind the microphone. `SYNC` therefore does not need
+dialling in: at start-up the engine measures the song path for the current endpoint
+(a 5 ms burst through the render client, read back on the loopback capture), caches
+it per endpoint, and delays the vocal by the difference plus a 6 ms allowance for the
+converter and the air path to the capsule. On the reference machine that is
+`record offset 44.6 ms` with the trim at `0.0 ms`. The trim stays as a fine control
+(±300 ms in 0.5 ms steps) for a driver that misreports its input latency, and the
+karaoke cut's own 21 ms frame delay is added to the alignment while it is engaged.
 
 The 17.1 ms figure is an **estimate** built from the driver's own numbers plus one
 buffer period. It is not a measured acoustic round trip — no loopback cable or
@@ -189,6 +210,11 @@ installer/lvs.iss       Inno Setup script
   and explains why, because a bus copy there would double the song. Local files
   decoded inside the console will not have this split; everything will run
   through the bus.
+* The vocal cut is a spectral centre canceller, not source separation. On a measured
+  take it removes 84 % of the vocal band and 97 % of the presence band; what is left
+  is the part of the voice that is not centred (doubling, stereo reverb). Going past
+  that needs a separation model such as Demucs, which runs offline over a whole file
+  rather than live, so it is not something the console can do in real time.
 * The karaoke player needs network access; the console is fully functional offline.
 * YouTube playback is subject to the embed's own restrictions (age-gated or
   region-blocked videos will not play; the player reports the error itself).

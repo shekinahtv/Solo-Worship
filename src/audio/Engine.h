@@ -40,6 +40,10 @@ struct EngineConfig {
   int deviceChannels = 2;   // informational, refreshed on open
   bool captureEnabled = true;
   bool musicEnabled = true;
+  // Cached song-path measurement. Re-measured only when the capture endpoint
+  // changes, so a normal launch is silent and instant.
+  std::wstring latencyCacheId;
+  double latencyCacheMs = 0.0;
 };
 
 struct EngineStats {
@@ -97,6 +101,12 @@ public:
   void setMusicDirect(bool direct) { musicDirect_.store(direct); }
   bool musicDirect() const { return musicDirect_.load(); }
 
+  // Make-up gain for the captured song. Karaoke cannot mute the player: a
+  // silenced session stops rendering, and loopback only captures what is
+  // rendered. The player is ducked to 1% instead, so it keeps rendering, and
+  // the captured copy is scaled back up here (100x = +40 dB).
+  void setMusicDuck(float gain) { musicDuck_.store(gain > 0.0f ? gain : 1.0f); }
+
   // Recording
   bool startRecording(const std::wstring& path, int bitDepth, bool recordVocal,
                       std::wstring* error);
@@ -108,6 +118,14 @@ public:
   // Measurement helper: opens the render endpoint's loopback and reports the
   // measured output latency by timing an impulse. Returns -1 when unavailable.
   double measureOutputLatencyMs(const std::wstring& renderId, std::wstring* note);
+
+  // Latency of the song's own path (player -> output endpoint -> loopback
+  // capture), measured once at start with an impulse. 0 when unavailable.
+  bool songLatencyMeasured() const { return measuredLoopMs_.load() > 0.0; }
+  double measuredSongLatencyMs() const { return measuredLoopMs_.load(); }
+  // The offset actually applied to the voice in the recording bus, in ms
+  // (measured path + SYNC trim). Shown next to the SYNC control.
+  double recordOffsetMs() const;
 
   // ASIO driver discovery (registry), preferring the Focusrite.
   static std::wstring SuggestAsioClsid(std::wstring* driverName = nullptr);
@@ -125,6 +143,12 @@ private:
   void pullMusic(int frames);
   void process(float* dryMono, const float* musicL, const float* musicR, float* outL,
                float* outR, int frames);
+  // Cushion pullMusic keeps in the music ring, in frames.
+  int musicTargetFrames() const;
+  // How far the loopback copy of the song sits behind the live vocal, so the
+  // recording can delay the vocal by the same amount and land them together.
+  // The user's SYNC trim is added on top of the measured part.
+  int alignmentFrames() const;
 
   ParamStore params_;
   EngineConfig cfg_;
@@ -135,6 +159,7 @@ private:
   std::atomic<bool> deviceLost_{false};
   std::atomic<bool> musicActive_{true};
   std::atomic<bool> musicDirect_{false};
+  std::atomic<float> musicDuck_{1.0f};
 
   // meters (published to the UI thread)
   std::atomic<float> inPeak_{0}, outPeakL_{0}, outPeakR_{0}, musicPeak_{0};
@@ -148,6 +173,13 @@ private:
   std::atomic<bool> asioActive_{false};
   std::atomic<double> asioInLat_{0}, asioOutLat_{0};
   std::atomic<int> openError_{0};
+  // Latency the loopback capture client reports; part of the record alignment.
+  std::atomic<double> musicLatMs_{0.0};
+  // Same for the microphone client: its frames arrive already late, which is
+  // what the song side does not share.
+  std::atomic<double> micLatMs_{0.0};
+  // Result of measureOutputLatencyMs() on the loopback endpoint, in ms.
+  std::atomic<double> measuredLoopMs_{0.0};
   std::wstring lastError_;
 
   struct Impl;

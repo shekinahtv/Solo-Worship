@@ -31,6 +31,8 @@ open the link in a browser to confirm the video is available.</div>
   var videoId = params.get('v') || '';
   var listId = params.get('list') || '';
   var autoplay = params.get('autoplay') !== '0';
+  var rate = parseFloat(params.get('rate') || '1');
+  if (!(rate > 0)) rate = 1;
   var player = null, ready = false, failed = false;
 
   function onYouTubeIframeAPIReady() {
@@ -49,7 +51,13 @@ open the link in a browser to confirm the video is available.</div>
     var options = {
       playerVars: vars,
       events: {
-        onReady: function (e) { ready = true; if (autoplay) e.target.playVideo(); },
+        onReady: function (e) {
+          ready = true;
+          if (Math.abs(rate - 1) > 0.001) {
+            try { e.target.setPlaybackRate(rate); } catch (err) {}
+          }
+          if (autoplay) e.target.playVideo();
+        },
         onError: function (e) {
           failed = true;
           var url = videoId ? ('https://www.youtube.com/watch?v=' + videoId)

@@ -57,6 +57,7 @@ enum Action {
   A_SELECT_INPUT_CH,
   A_SELECT_OUT_L,
   A_SELECT_OUT_R,
+  A_SELECT_KARAOKE_CUT,
   A_SAVE_CONFIRM,
   A_SAVE_CANCEL,
   A_DELETE_PRESET,
@@ -67,6 +68,10 @@ enum Action {
   A_REV_TYPE,
   A_REV_PRESET,
   A_MUSIC_ROUTE,
+  A_TEMPO_DOWN,
+  A_TEMPO_UP,
+  A_TEMPO_RESET,
+  A_KARAOKE,
   A_QUEUE_TOGGLE,
   A_QUEUE_CLOSE,
   A_QUEUE_PREV,
@@ -160,6 +165,8 @@ public:
   void queueStep(int delta);
   void tick();
   void setMusicDirect(bool on, const std::wstring* note);
+  // -1 / +1 step through the embed's playback rates, 0 puts it back to 1x.
+  void stepPlaybackRate(int dir);
   // Bus monitoring is only honest when karaoke and console output are different
   // endpoints; otherwise the console's copy would double the song.
   bool musicBusPossible() const;
@@ -247,11 +254,16 @@ private:
   std::string pendingPlaylistStart_;
   std::string lastEndedId_;
 
+  // Song tempo as last chosen; the embed applies it on every track it loads.
+  double playbackRate_ = 1.0;
+
   // Embedded-player Windows session volume (music fader) state
   bool sessionDirect_ = false;
   double lastSessionPush_ = 0.0;
   int lastSessionPct_ = -1;
   bool lastSessionMute_ = false;
+  bool sessionDucked_ = false;
+  std::wstring lastDuckNote_;
   int sessionHit_ = 0, sessionMiss_ = 0;
 
   // performance

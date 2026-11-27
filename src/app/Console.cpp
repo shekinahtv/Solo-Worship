@@ -418,6 +418,25 @@ void App::drawMicPanel(D2D1_RECT_F outer) {
     y += 204.0f;
   }
 
+  // --- Echo / delay ------------------------------------------------------
+  {
+    D2D1_RECT_F sr = section("ECHO / DELAY", 104.0f, "IN", (int)P::EchoOn);
+    const P ids[5] = {P::EchoTime, P::EchoFb, P::EchoMix, P::EchoTone, P::EchoSpread};
+    const float kw = (width(sr) - 20.0f) / 5.0f;
+    for (int i = 0; i < 5; ++i) {
+      D2D1_RECT_F kr =
+          R(sr.left + 10 + i * kw, sr.top + 22, sr.left + 10 + (i + 1) * kw, sr.top + 86);
+      drawKnob(gfx_, kr, params().norm(ids[i]), paramLabel((int)ids[i]), paramText((int)ids[i]),
+               params().getBool(P::EchoOn), false, {false, true});
+      addHit((int)ids[i], kr, 0);
+    }
+    gfx_.text(params().getBool(P::EchoOn) ? "VOICE ECHO - REPEATS FOLLOW THE MIC FADER"
+                                          : "VOICE ECHO OFF - SWITCH IN ON TO ADD REPEATS",
+              R(sr.left + 10, sr.top + 88, sr.right - 10, sr.top + 102), T.faint, F_TINY, AL_LEFT,
+              true);
+    y += 112.0f;
+  }
+
   y += 6.0f;
   leftContentHeight_ = y - (contentTop - leftScroll_);
   gfx_.popClip();
@@ -517,6 +536,17 @@ void App::drawCenter(D2D1_RECT_F outer) {
                 videoR.top + videoH * 0.5f + 44),
               T.faint, F_SMALL, AL_CENTER);
   }
+  if (!youtube_.available() && !youtube_.lastError().empty()) {
+    // The embedded browser is not there: say why instead of showing black.
+    gfx_.text("EMBEDDED PLAYER UNAVAILABLE",
+              R(videoR.left, videoR.top + videoH * 0.5f - 28, videoR.right,
+                videoR.top + videoH * 0.5f),
+              T.red, F_SMALL, AL_CENTER);
+    gfx_.text(W(youtube_.lastError()),
+              R(videoR.left + 30, videoR.top + videoH * 0.5f, videoR.right - 30,
+                videoR.top + videoH * 0.5f + 56),
+              T.faint, F_TINY, AL_CENTER, true);
+  }
 
   // Transport
   const float ty = videoR.bottom + 10.0f;
@@ -527,6 +557,8 @@ void App::drawCenter(D2D1_RECT_F outer) {
   D2D1_RECT_F fwdR = R(backR.right + 4, ty, backR.right + 56, ty + 28);
   D2D1_RECT_F queueR = R(inner.right - 154, ty, inner.right - 82, ty + 28);
   D2D1_RECT_F fullR = R(inner.right - 76, ty, inner.right, ty + 28);
+  D2D1_RECT_F karR = R(inner.right - 258, ty, inner.right - 162, ty + 28);
+  const bool karaokeOn = params().getBool(P::KaraokeOn);
   const bool playing = youtube_.playing();
   drawButton(gfx_, playR, playing ? "PAUSE" : "PLAY", playing, false);
   drawButton(gfx_, prevR, "PREV", false, false);
@@ -541,6 +573,8 @@ void App::drawCenter(D2D1_RECT_F outer) {
     snprintf(queueLabel, sizeof(queueLabel), "PLAYLIST %d/%d", queue_.current() + 1,
              queue_.size());
   drawChip(gfx_, queueR, queueLabel, overlayQueue_, false, T.accent);
+  drawChip(gfx_, karR, "KARAOKE", karaokeOn, false, T.amber);
+  addHit(kActionBase + A_KARAOKE, karR, 2);
   addHit(kActionBase + A_YT_PLAY, playR, 2);
   addHit(kActionBase + A_QUEUE_PREV, prevR, 2);
   addHit(kActionBase + A_QUEUE_NEXT, nextR, 2);
@@ -551,8 +585,8 @@ void App::drawCenter(D2D1_RECT_F outer) {
 
   // Seek bar
   const float seekX0 = fwdR.right + 12;
-  // Stop before the playlist chip: the bar is drawn after the chip and would cover it.
-  const float seekX1 = queueR.left - 10;
+  // Stop before the karaoke chip: the bar is drawn after the chips and would cover it.
+  const float seekX1 = karR.left - 10;
   D2D1_RECT_F seekR = R(seekX0, ty + 10, seekX1, ty + 18);
   const double dur = youtube_.duration();
   const double pos = youtube_.position();
@@ -593,7 +627,7 @@ void App::drawCenter(D2D1_RECT_F outer) {
   D2D1_RECT_F stripR = R(inner.left, ty + 58, inner.right, inner.bottom);
   gfx_.roundRect(stripR, 6.0f, rgba(0x121519, 0.7f));
   gfx_.roundRectOutline(stripR, 6.0f, T.strokeSoft, 1.0f);
-  gfx_.text(ui::spaced("MUSIC CHANNEL"), R(stripR.left + 10, stripR.top + 5, stripR.left + 112,
+  gfx_.text(ui::spaced("MUSIC CHANNEL"), R(stripR.left + 10, stripR.top + 5, stripR.left + 100,
                                            stripR.top + 18),
             T.dim, F_TINY, AL_LEFT);
 
@@ -602,10 +636,31 @@ void App::drawCenter(D2D1_RECT_F outer) {
   const bool busPossible = musicBusPossible();
   const bool busSelected = settings_.musicThroughBus && busPossible;
   const bool musicDirect = engine_.musicDirect();
-  D2D1_RECT_F routeR = R(stripR.left + 112, stripR.top + 2, stripR.left + 256, stripR.top + 20);
+  D2D1_RECT_F routeR = R(stripR.left + 104, stripR.top + 2, stripR.left + 244, stripR.top + 20);
   drawChip(gfx_, routeR, busSelected ? "MUSIC -> BUS" : "MUSIC -> WINDOWS",
            busSelected || musicDirect, false, busSelected ? T.amber : T.cyan);
   addHit(kActionBase + A_MUSIC_ROUTE, routeR, 2);
+
+  // Song tempo. A tempo that is not 1x is shown in the accent colour so it is
+  // never a mystery why the track sounds fast or slow.
+  {
+    const float tx = routeR.right + 10.0f;
+    gfx_.text("TEMPO", R(tx, stripR.top + 6, tx + 42, stripR.top + 18), T.faint, F_TINY, AL_LEFT);
+    D2D1_RECT_F downR = R(tx + 42, stripR.top + 2, tx + 66, stripR.top + 20);
+    D2D1_RECT_F valR = R(downR.right + 3, stripR.top + 2, downR.right + 63, stripR.top + 20);
+    D2D1_RECT_F upR = R(valR.right + 3, stripR.top + 2, valR.right + 27, stripR.top + 20);
+    D2D1_RECT_F oneR = R(upR.right + 4, stripR.top + 2, upR.right + 32, stripR.top + 20);
+    drawButton(gfx_, downR, "-", false, false);
+    drawButton(gfx_, upR, "+", false, false);
+    drawButton(gfx_, oneR, "1x", playbackRate_ > 0.999 && playbackRate_ < 1.001, false);
+    char tempoBuf[24];
+    snprintf(tempoBuf, sizeof(tempoBuf), "%.2fx", playbackRate_);
+    drawChip(gfx_, valR, tempoBuf, playbackRate_ > 1.001 || playbackRate_ < 0.999, false,
+             T.accent);
+    addHit(kActionBase + A_TEMPO_DOWN, downR, 2);
+    addHit(kActionBase + A_TEMPO_UP, upR, 2);
+    addHit(kActionBase + A_TEMPO_RESET, oneR, 2);
+  }
 
   D2D1_RECT_F musMeter = R(stripR.left + 10, stripR.top + 26, stripR.right - 210, stripR.top + 34);
   drawMeter(gfx_, musMeter, musMeter_, musMeter_, false, true);
@@ -626,11 +681,17 @@ void App::drawCenter(D2D1_RECT_F outer) {
   gfx_.text("MUSIC LEVEL " + paramText((int)P::MusicFader),
             R(stripR.left + 10, stripR.top + 64, stripR.left + 200, stripR.top + 78), T.faint,
             F_TINY, AL_LEFT);
-  gfx_.text(busSelected ? "EQ + PAN LIVE IN MONITOR AND RECORDING"
-                        : (musicDirect ? "EQ + PAN APPLY TO THE RECORDING ONLY"
-                                       : "EQ + PAN -> RECORDING WHEN THE PLAYER IS ACTIVE"),
+  const bool karaokeLive = karaokeOn && musicBusPossible() && stats().musicOpen;
+  const std::string karaokeLabel =
+      std::string(karaokeLive ? "KARAOKE: VOCAL CUT LIVE" : "KARAOKE: VOCAL CUT IN THE RECORDING") +
+      " " + std::to_string((int)(params().get(P::KaraokeDepth) * 100.0f + 0.5f)) + "%";
+  gfx_.text(karaokeOn ? karaokeLabel.c_str()
+                      : (busSelected ? "EQ + PAN LIVE IN MONITOR AND RECORDING"
+                                     : (musicDirect ? "EQ + PAN APPLY TO THE RECORDING ONLY"
+                                                    : "EQ + PAN -> RECORDING WHEN THE PLAYER IS ACTIVE")),
             R(stripR.left + 200, stripR.top + 64, stripR.right - 210, stripR.top + 78),
-            busSelected ? T.cyan : (musicDirect ? T.amber : T.faint), F_TINY, AL_RIGHT, true);
+            karaokeOn ? T.amber : (busSelected ? T.cyan : (musicDirect ? T.amber : T.faint)),
+            F_TINY, AL_RIGHT, true);
 
   // Music EQ
   const float eqX = stripR.right - 196;
@@ -666,7 +727,9 @@ void App::drawMaster(D2D1_RECT_F outer) {
 
   // Faders
   const float faderTop = inner.top + 44.0f;
-  const float faderH = std::clamp(height(inner) * 0.30f, 150.0f, 236.0f);
+  // The faders absorb the height the sections below do not need, so the panel
+  // never opens with a large dead area under the recording card.
+  const float faderH = std::clamp(height(inner) - 396.0f, 170.0f, 380.0f);
   const float faderW = (width(inner) - 40.0f) / 3.0f;
   const P faders[3] = {P::MicFader, P::MusicFader, P::MasterFader};
   const bool accents[3] = {true, false, true};
@@ -762,44 +825,85 @@ void App::drawMaster(D2D1_RECT_F outer) {
   y += 28.0f;
 
   // Recording
-  D2D1_RECT_F recCard = R(inner.left, y, inner.right, inner.bottom);
+  // Rows are laid out top-down inside a card that is only as tall as its
+  // content, and each one is drawn only when it fits: the old card stretched to
+  // the panel bottom and put the SYNC knob on top of the format chips.
+  D2D1_RECT_F recCard = R(inner.left, y, inner.right, std::min(inner.bottom, y + 170.0f));
   gfx_.roundRect(recCard, 6.0f, rgba(0x121519, 0.7f));
   gfx_.roundRectOutline(recCard, 6.0f, T.strokeSoft, 1.0f);
-  gfx_.text(ui::spaced("RECORDING"), R(recCard.left + 10, recCard.top + 5, recCard.right,
+  gfx_.text(ui::spaced("RECORDING"), R(recCard.left + 10, recCard.top + 5, recCard.right - 10,
                                        recCard.top + 18),
             T.dim, F_TINY, AL_LEFT);
 
-  D2D1_RECT_F recBtn = R(recCard.left + 10, recCard.top + 22, recCard.left + 74, recCard.top + 44);
-  drawButton(gfx_, recBtn, recording_ ? "STOP" : "REC", recording_, false, recording_);
-  addHit(kActionBase + A_REC_TOGGLE, recBtn, 2);
+  const float l = recCard.left + 10.0f;
+  const float r = recCard.right - 10.0f;
+  const float limit = recCard.bottom - 2.0f;
 
-  char recInfo[96];
-  if (recording_) {
-    const double secs = stats().frames ? engine_.recordingSeconds() : 0.0;
-    snprintf(recInfo, sizeof(recInfo), "%s  %d-bit", timecode(secs).c_str(),
-             settings_.recordBits);
-  } else {
-    snprintf(recInfo, sizeof(recInfo), "%d-bit WAV", settings_.recordBits);
+  if (recCard.top + 50.0f <= limit) {
+    D2D1_RECT_F recBtn = R(l, recCard.top + 24, l + 62, recCard.top + 48);
+    drawButton(gfx_, recBtn, recording_ ? "STOP" : "REC", recording_, false, recording_);
+    addHit(kActionBase + A_REC_TOGGLE, recBtn, 2);
+
+    char recInfo[96];
+    if (recording_) {
+      const double secs = stats().frames ? engine_.recordingSeconds() : 0.0;
+      snprintf(recInfo, sizeof(recInfo), "%s  %d-bit", timecode(secs).c_str(),
+               settings_.recordBits);
+    } else {
+      snprintf(recInfo, sizeof(recInfo), "%d-bit WAV", settings_.recordBits);
+    }
+    gfx_.text(recInfo, R(recBtn.right + 8, recCard.top + 24, r, recCard.top + 48),
+              recording_ ? T.red : T.dim, F_SMALL, AL_LEFT, true);
   }
-  gfx_.text(recInfo, R(recBtn.right + 8, recCard.top + 22, recCard.right - 10, recCard.top + 44),
-            recording_ ? T.red : T.dim, F_SMALL, AL_LEFT);
 
-  D2D1_RECT_F fmtR = R(recCard.left + 10, recCard.top + 50, recCard.left + 78, recCard.top + 70);
-  D2D1_RECT_F srcR = R(fmtR.right + 6, recCard.top + 50, fmtR.right + 118, recCard.top + 70);
-  drawChip(gfx_, fmtR, settings_.recordBits == 24 ? "24-BIT" : "32F", false, false, T.accent);
-  drawChip(gfx_, srcR, settings_.recordVocal ? "VOCAL" : "MASTER", false, false, T.accent);
-  addHit(kActionBase + A_REC_FORMAT, fmtR, 2);
-  addHit(kActionBase + A_REC_SOURCE, srcR, 2);
+  if (recCard.top + 76.0f <= limit) {
+    D2D1_RECT_F fmtR = R(l, recCard.top + 54, l + 60, recCard.top + 74);
+    D2D1_RECT_F srcR = R(fmtR.right + 6, recCard.top + 54, fmtR.right + 106, recCard.top + 74);
+    drawChip(gfx_, fmtR, settings_.recordBits == 24 ? "24-BIT" : "32F", false, false, T.accent);
+    drawChip(gfx_, srcR, settings_.recordVocal ? "VOCAL" : "MASTER", false, false, T.accent);
+    addHit(kActionBase + A_REC_FORMAT, fmtR, 2);
+    addHit(kActionBase + A_REC_SOURCE, srcR, 2);
+  }
 
-  D2D1_RECT_F folderR = R(recCard.left + 10, recCard.top + 76, recCard.right - 10,
-                          recCard.top + 96);
-  drawButton(gfx_, folderR, "OPEN RECORDINGS FOLDER", false, false);
-  addHit(kActionBase + A_REC_FOLDER, folderR, 2);
+  // SYNC: a horizontal trim with the offset the engine picked shown beside it.
+  if (recCard.top + 114.0f <= limit) {
+    const float sy = recCard.top + 80.0f;
+    gfx_.text("SYNC", R(l, sy, l + 32, sy + 14), T.faint, F_TINY, AL_LEFT);
+    D2D1_RECT_F track = R(l + 34, sy + 4, r - 58, sy + 14);
+    const float n = params().norm(P::RecSync);
+    gfx_.roundRect(track, 4.0f, T.bgDeep);
+    const float cx = track.left + width(track) * 0.5f;
+    gfx_.line(D2D1::Point2F(cx, track.top - 2), D2D1::Point2F(cx, track.bottom + 2), T.strokeSoft,
+              1.0f);
+    gfx_.roundRect(R(track.left, track.top, track.left + width(track) * n, track.bottom), 4.0f,
+                   T.accent);
+    const float knobX = track.left + width(track) * n;
+    gfx_.roundRect(R(knobX - 4, track.top - 2, knobX + 4, track.bottom + 2), 3.0f, T.text);
+    addHit((int)P::RecSync, R(track.left, track.top - 6, track.right, track.bottom + 6), 4);
+    gfx_.text(paramText((int)P::RecSync), R(r - 54, sy, r, sy + 14), T.text, F_TINY, AL_RIGHT);
 
-  D2D1_RECT_F folder2 = R(recCard.left + 10, recCard.top + 100, recCard.right - 10,
-                          recCard.top + 118);
-  gfx_.text(W(json::Value::toUtf8(settings_.recordingFolder)), folder2, T.faint, F_TINY, AL_LEFT,
-            true);
+    const double trim = (double)params().get(P::RecSync);
+    const double total = engine_.recordOffsetMs();
+    const double autoMs = total - trim;
+    char autoBuf[96];
+    // Automatic by default: the trim only shows up once it has been moved.
+    if (std::fabs(trim) < 0.05)
+      snprintf(autoBuf, sizeof(autoBuf), "AUTO ALIGN %.0f ms", autoMs);
+    else
+      snprintf(autoBuf, sizeof(autoBuf), "AUTO %.0f ms  TRIM %+.0f  TOTAL %.0f ms", autoMs,
+               trim, total);
+    gfx_.text(autoBuf, R(l, sy + 17, r, sy + 31), T.faint, F_TINY, AL_LEFT, true);
+  }
+
+  if (recCard.top + 142.0f <= limit) {
+    D2D1_RECT_F folderR = R(l, recCard.top + 116, r, recCard.top + 136);
+    drawButton(gfx_, folderR, "OPEN RECORDINGS FOLDER", false, false);
+    addHit(kActionBase + A_REC_FOLDER, folderR, 2);
+    if (recCard.top + 158.0f <= limit) {
+      gfx_.text(W(json::Value::toUtf8(settings_.recordingFolder)),
+                R(l, recCard.top + 139, r, recCard.top + 153), T.faint, F_TINY, AL_LEFT, true);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +937,8 @@ void App::drawStatusBar(D2D1_RECT_F r) {
   if (engine_.musicDirect()) {
     gfx_.text("MUSIC FADER -> WINDOWS PLAYER SESSION", R(r.right - 620, r.top, r.right - 270, r.bottom),
               T.cyan, F_TINY, AL_RIGHT, true);
-  } else if (settings_.engine.captureEnabled && !settings_.engine.loopbackId.empty() &&
+  } else if (!st.asio && settings_.engine.captureEnabled &&
+             !settings_.engine.loopbackId.empty() &&
              settings_.engine.loopbackId == settings_.engine.renderId) {
     gfx_.text("FEEDBACK RISK: karaoke is captured from the output device in use. Use headphones.",
               R(r.right - 660, r.top, r.right - 270, r.bottom), T.amber, F_TINY, AL_RIGHT, true);
@@ -983,7 +1088,7 @@ void App::drawOverlays() {
   if (overlaySettings_) {
     gfx_.rect(R(0, 0, gfx_.width(), gfx_.height()), rgba(0x000000, 0.55f));
     const float pw = std::min(880.0f, gfx_.width() - 80.0f);
-    const float ph = std::min(640.0f, gfx_.height() - 80.0f);
+    const float ph = std::min(520.0f, gfx_.height() - 80.0f);
     D2D1_RECT_F panel = R((gfx_.width() - pw) * 0.5f, (gfx_.height() - ph) * 0.5f,
                           (gfx_.width() + pw) * 0.5f, (gfx_.height() + ph) * 0.5f);
     gfx_.shadow(panel, 10.0f, 18.0f);
@@ -1071,13 +1176,13 @@ void App::drawSettingsPanel(D2D1_RECT_F panel) {
   for (auto& e : captureDevices_)
     if (e.id == settings_.engine.captureId)
       inputName = json::Value::toUtf8(e.name) + stateTag(e);
-  row("WASAPI INPUT", A_SELECT_CAPTURE, inputName, in.left, y + 52.0f, colW);
+  row("WASAPI INPUT", A_SELECT_CAPTURE, inputName, in.left, y + 58.0f, colW);
 
   std::string outputName = "(default)";
   for (auto& e : renderDevices_)
     if (e.id == settings_.engine.renderId)
       outputName = json::Value::toUtf8(e.name) + stateTag(e);
-  row("WASAPI OUTPUT", A_SELECT_RENDER, outputName, in.left, y + 104.0f, colW);
+  row("WASAPI OUTPUT", A_SELECT_RENDER, outputName, in.left, y + 116.0f, colW);
 
   std::string loopName = "(none)";
   const std::wstring defaultRender = defaultRenderId_;
@@ -1087,28 +1192,32 @@ void App::drawSettingsPanel(D2D1_RECT_F panel) {
     else if (!settings_.engine.loopbackFollowDefault && e.id == settings_.engine.loopbackId)
       loopName = json::Value::toUtf8(e.name);
   }
-  row("KARAOKE CAPTURE (LOOPBACK)", A_SELECT_LOOPBACK, loopName, in.left, y + 156.0f, colW);
+  row("KARAOKE CAPTURE (LOOPBACK)", A_SELECT_LOOPBACK, loopName, in.left, y + 174.0f, colW);
 
   row("SAMPLE RATE", A_SELECT_RATE, std::to_string(settings_.engine.sampleRate) + " Hz", in.left,
-      y + 208.0f, colW);
+      y + 232.0f, colW);
 
   // Right column: buffer, channel mapping
   row("BUFFER SIZE", A_SELECT_BUFFER, std::to_string(settings_.engine.bufferFrames) + " samples",
       in.left + colW + 24.0f, y, colW);
   row("MICROPHONE INPUT", A_SELECT_INPUT_CH,
       "Input " + std::to_string(settings_.engine.captureChannel + 1), in.left + colW + 24.0f,
-      y + 52.0f, colW);
+      y + 58.0f, colW);
   row("MAIN OUTPUT", A_SELECT_OUT_L,
       "Ch " + std::to_string(settings_.engine.outLeft + 1) + " / " +
           std::to_string(settings_.engine.outRight + 1),
-      in.left + colW + 24.0f, y + 104.0f, colW);
+      in.left + colW + 24.0f, y + 116.0f, colW);
 
-  D2D1_RECT_F exR = R(in.left + colW + 24.0f, y + 156.0f, in.left + colW + 24.0f + 180.0f,
-                      y + 178.0f);
+  const int cutPct = (int)(params().get(P::KaraokeDepth) * 100.0f + 0.5f);
+  row("VOCAL CUT DEPTH", A_SELECT_KARAOKE_CUT, std::to_string(cutPct) + "%",
+      in.left + colW + 24.0f, y + 174.0f, colW);
+
+  D2D1_RECT_F exR = R(in.left + colW + 24.0f, y + 232.0f, in.left + colW + 24.0f + 180.0f,
+                      y + 254.0f);
   drawChip(gfx_, exR, "WASAPI EXCLUSIVE", settings_.engine.exclusive, false, T.accent);
   addHit(kActionBase + A_DEVICE_EXCLUSIVE, exR, 2);
 
-  D2D1_RECT_F capR = R(exR.left, y + 186.0f, exR.left + 180.0f, y + 208.0f);
+  D2D1_RECT_F capR = R(exR.left, y + 260.0f, exR.left + 180.0f, y + 282.0f);
   drawChip(gfx_, capR, "MIC INPUT ENABLED", settings_.engine.captureEnabled, false, T.cyan);
   addHit(kActionBase + A_CAPTURE_ENABLE, capR, 2);
 
@@ -1123,8 +1232,11 @@ void App::drawSettingsPanel(D2D1_RECT_F panel) {
            st.asio ? st.asioOutputLatencyMs : st.streamLatencyMs,
            st.running ? "ENGINE ACTIVE" : "ENGINE STOPPED", st.bufferLatencyMs, st.streamLatencyMs,
            st.deviceChannels, st.dropouts, st.captureOpen ? "MIC OPEN" : "MIC CLOSED");
-  gfx_.roundRect(R(in.left, y + 236.0f, in.right, y + 286.0f), 6.0f, rgba(0x0E1114, 0.9f));
-  gfx_.text(info, R(in.left + 10, y + 240.0f, in.right - 10, y + 282.0f), T.dim, F_TINY, AL_LEFT);
+  // Below the last row's select (which ends at y + 256) with a clean gap, so the
+  // sample-rate dropdown and this readout can no longer overlap.
+  gfx_.roundRect(R(in.left, y + 288.0f, in.right, y + 344.0f), 6.0f, rgba(0x0E1114, 0.9f));
+  gfx_.text(info, R(in.left + 10, y + 292.0f, in.right - 10, y + 340.0f), T.dim, F_TINY,
+            AL_LEFT);
 
   D2D1_RECT_F applyR = R(in.left, in.bottom - 40.0f, in.left + 190.0f, in.bottom - 12.0f);
   drawButton(gfx_, applyR, "APPLY & RESTART AUDIO", true, false);

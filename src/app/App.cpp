@@ -154,18 +154,37 @@ bool App::init(HINSTANCE hinst) {
   category_ = settings_.presetCategory;
   slotA_.resize(kParamCount);
   slotB_.resize(kParamCount);
+  // Alignment is automatic; the trim is only a manual override and it used to
+  // carry over a value dialled in against the old guess, so it is cleared once.
+  if (!settings_.syncTrimMigrated) {
+    settings_.recSyncMs = 0.0f;
+    settings_.syncTrimMigrated = true;
+    SettingsStore::save(settings_);
+  }
+  // Restored after the preset so a dialled-in record alignment and the karaoke
+  // switch survive a restart.
+  engine_.params().set(P::RecSync, settings_.recSyncMs);
+  engine_.params().set(P::KaraokeOn, settings_.karaoke ? 1.0f : 0.0f);
+  playbackRate_ = settings_.playbackRate > 0.0 ? settings_.playbackRate : 1.0;
+  youtube_.setPlaybackRate(playbackRate_);
   engine_.params().capture(slotA_.data());
   engine_.params().capture(slotB_.data());
 
   refreshDevices(true);
+
+  // Start the embed before the audio engine: the browser process takes a few
+  // seconds to spin up, and doing it first is what keeps the player from sitting
+  // black while everything else is already running.
+  const std::string startupId = YouTubeHost::extractVideoId(settings_.lastUrl);
+  if (!startupId.empty()) youtube_.loadVideo(startupId, false);
+  youtube_.create(hwnd_);
+
   startEngine();
   logLine("init: engine start attempted");
-
-  if (settings_.lastUrl.size() == 11) {
-    youtube_.loadVideo(settings_.lastUrl, false);
-  }
-
-  youtube_.create(hwnd_);
+  // A missing or broken WebView2 used to leave a black panel with no clue; the
+  // reason is logged and drawn in the player area instead.
+  if (!youtube_.lastError().empty()) logLine(("webview: " + youtube_.lastError()).c_str());
+  else logLine("webview: embedded player creating");
   if (settings_.fullscreenVideo) videoFullscreen_ = true;
 
   logLine("init: complete");
@@ -183,6 +202,8 @@ int App::run() {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  // Never leave the Windows player ducked behind our back.
+  if (params().getBool(P::KaraokeOn)) applyPlayerVolume(1.0f, false, nullptr);
   return 0;
 }
 
@@ -190,6 +211,8 @@ void App::startEngine() {
   std::wstring err;
   if (engine_.Start(settings_.engine, &err)) {
     settings_.engine = engine_.config();
+    // Persist the measured song-path cache so the next launch is silent.
+    SettingsStore::save(settings_);
     errorText_.clear();
     const EngineStats st = engine_.stats();
     char msg[256];
@@ -198,6 +221,16 @@ void App::startEngine() {
              st.bufferFrames, st.asio ? "ASIO" : "WASAPI", st.asioInputLatencyMs,
              st.asioOutputLatencyMs);
     logLine(msg);
+    if (engine_.songLatencyMeasured()) {
+      char lat[160];
+      snprintf(lat, sizeof(lat),
+               "engine: song path %.1f ms (cached/measured for this endpoint), record offset "
+               "%.1f ms",
+               engine_.measuredSongLatencyMs(), engine_.recordOffsetMs());
+      logLine(lat);
+    } else {
+      logLine("engine: song path not measured - using the loopback client's report");
+    }
     logLine(("engine: karaoke capture " +
              std::string(settings_.engine.loopbackFollowDefault ? "follows the Windows default: "
                                                                : "pinned to: ") +
@@ -438,6 +471,28 @@ void App::runAction(int action, int value) {
     break;
   case A_YT_BACK: youtube_.seekBy(-10.0); break;
   case A_YT_FWD: youtube_.seekBy(10.0); break;
+  case A_TEMPO_DOWN: stepPlaybackRate(-1); break;
+  case A_TEMPO_UP: stepPlaybackRate(1); break;
+  case A_TEMPO_RESET: stepPlaybackRate(0); break;
+  case A_KARAOKE: {
+    const bool on = !params().getBool(P::KaraokeOn);
+    params().set(P::KaraokeOn, on ? 1.0f : 0.0f);
+    settings_.karaoke = on;
+    if (!on) {
+      status_ = L"Karaoke off: the Windows player is back in control.";
+      logLine("karaoke: vocal cut off");
+    } else if (musicBusPossible()) {
+      status_ = L"Karaoke on: the console plays the song with the vocal cut.";
+      logLine("karaoke: vocal cut on, song carried by the console");
+    } else {
+      // Same WASAPI endpoint in and out: monitoring the cut there would feed our
+      // own output back into the capture, so only the recording gets it.
+      status_ = L"Karaoke on: vocal cut in the recording. Switch the audio driver to ASIO (or route the song to another device) to hear it live.";
+      logLine("karaoke: vocal cut on (recording only, shared endpoint)");
+    }
+    SettingsStore::save(settings_);
+    break;
+  }
   case A_YT_FULLSCREEN:
     videoFullscreen_ = !videoFullscreen_;
     settings_.fullscreenVideo = videoFullscreen_;
@@ -495,12 +550,19 @@ void App::runAction(int action, int value) {
     break;
   }
   case A_DEVICE_MEASURE: {
+    // Measure the path the song actually takes (endpoint -> loopback) and cache
+    // it, so the alignment uses a real number instead of a guess.
     std::wstring note;
-    const double ms = engine_.measureOutputLatencyMs(
-        settings_.engine.useAsio ? au::DefaultId(eRender) : settings_.engine.renderId, &note);
+    const std::wstring target = settings_.engine.loopbackId.empty()
+                                    ? au::DefaultId(eRender)
+                                    : settings_.engine.loopbackId;
+    const double ms = engine_.measureOutputLatencyMs(target, &note);
     if (ms >= 0) {
-      wchar_t buf[128];
-      swprintf(buf, 128, L"Measured output latency: %.2f ms", ms);
+      settings_.engine.latencyCacheId = target;
+      settings_.engine.latencyCacheMs = ms;
+      SettingsStore::save(settings_);
+      wchar_t buf[160];
+      swprintf(buf, 160, L"Song path measured %.1f ms - APPLY & RESTART AUDIO to use it.", ms);
       status_ = buf;
     } else {
       status_ = L"Measurement unavailable: " + note;
@@ -543,6 +605,7 @@ void App::runAction(int action, int value) {
   case A_SELECT_INPUT_CH:
   case A_SELECT_OUT_L:
   case A_SELECT_OUT_R:
+  case A_SELECT_KARAOKE_CUT:
   case A_REV_TYPE:
   case A_EQ_PRESET:
   case A_REV_PRESET:
@@ -642,6 +705,8 @@ void App::buildSelectPopup(int owner) {
                "(no active output - enable one in Windows Sound settings)");
   } else if (owner == A_SELECT_RATE) {
     for (int r : {44100, 48000, 88200, 96000}) add(std::to_string(r) + " Hz", r);
+  } else if (owner == A_SELECT_KARAOKE_CUT) {
+    for (int pct : {50, 70, 80, 85, 90, 95, 100}) add(std::to_string(pct) + "%", pct);
   } else if (owner == A_SELECT_BUFFER) {
     for (int b : {64, 128, 256, 512, 1024}) add(std::to_string(b), b);
   } else if (owner == A_SELECT_INPUT_CH) {
@@ -715,6 +780,9 @@ void App::selectItem(int id) {
     }
   } else if (owner == A_SELECT_RATE) {
     settings_.engine.sampleRate = id;
+  } else if (owner == A_SELECT_KARAOKE_CUT) {
+    params().set(P::KaraokeDepth, (float)id / 100.0f);
+    logLine(("karaoke: vocal cut " + std::to_string(id) + "%").c_str());
   } else if (owner == A_SELECT_BUFFER) {
     settings_.engine.bufferFrames = id;
   } else if (owner == A_SELECT_INPUT_CH) {
@@ -758,7 +826,36 @@ void App::selectItem(int id) {
 
 bool App::musicBusPossible() const {
   const EngineConfig& e = settings_.engine;
+  // ASIO renders through the driver's own stream, so the Windows endpoint that
+  // carries the player is a different mix: the bus copy does not double and the
+  // console output never comes back through the loopback capture.
+  if (engine_.stats().asio) return true;
   return !e.loopbackId.empty() && !e.renderId.empty() && e.loopbackId != e.renderId;
+}
+
+void App::stepPlaybackRate(int dir) {
+  // Only the rates the official embed actually honours.
+  static const double kRates[] = {0.5, 0.75, 1.0, 1.25, 1.5};
+  const int count = (int)(sizeof(kRates) / sizeof(kRates[0]));
+  int idx = 2;
+  for (int i = 0; i < count; ++i) {
+    if (std::fabs(kRates[i] - playbackRate_) < 0.001) idx = i;
+  }
+  if (dir == 0) {
+    idx = 2;
+  } else {
+    idx = std::clamp(idx + dir, 0, count - 1);
+  }
+  playbackRate_ = kRates[idx];
+  youtube_.setPlaybackRate(playbackRate_);
+  settings_.playbackRate = playbackRate_;
+  SettingsStore::save(settings_);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "player: tempo %.2fx", playbackRate_);
+  logLine(buf);
+  wchar_t wbuf[64];
+  swprintf(wbuf, 64, L"Song tempo %.2fx", playbackRate_);
+  status_ = wbuf;
 }
 
 void App::setMusicDirect(bool on, const std::wstring* note) {
@@ -931,20 +1028,74 @@ void App::tick() {
   // snap the monitor path between the two modes.
   if (now - lastSessionPush_ > 0.4) {
     lastSessionPush_ = now;
-    const bool busRequested = settings_.musicThroughBus && musicBusPossible();
+    // Karaoke has to own the song so the vocal cut is what the room hears.
+    // Loopback capture only sees what a player actually renders, so a muted
+    // session takes the song away from the engine as well. Karaoke therefore
+    // ducks the player instead of muting it.
+    const bool karaoke = params().getBool(P::KaraokeOn) && youtube_.loaded();
+    const bool karaokeBus = karaoke && musicBusPossible();
+    const bool busRequested = karaokeBus || (settings_.musicThroughBus && musicBusPossible());
     const bool wantSession = youtube_.loaded() && !busRequested;
+    // -54 dB. Measured floor for this machine: a muted session drops the capture
+    // to zero, this level keeps it linear, so it is as quiet as it can safely be.
+    constexpr float kKaraokeBleed = 0.002f;
     if (!wantSession) {
       sessionHit_ = 0;
       sessionMiss_ = 0;
-      if (busRequested && lastSessionPct_ >= 0) {
-        // Leaving session control: hand the Windows level back to the user.
-        std::wstring note;
-        applyPlayerVolume(1.0f, false, &note);
-        lastSessionPct_ = -1;
-        lastSessionMute_ = false;
+      std::wstring note;
+      if (karaokeBus) {
+        // Muting the player empties the capture (measured 0.3000 -> 0.0000), so
+        // karaoke ducks it instead: the player keeps rendering and the capture
+        // survives (0.3000 -> 0.0006 at this level), while almost nothing of the
+        // original is left in the room because the engine scales the captured
+        // copy straight back up (make-up 1/kKaraokeBleed).
+        // Re-applied every tick, not once: WebView2 opens new audio sessions as
+        // it runs and each fresh session starts at full volume, which would be
+        // heard at size alongside the console copy.
+        const bool ducked = applyPlayerVolume(kKaraokeBleed, false, &note);
+        if (!sessionDucked_) {
+          sessionDucked_ = true;
+          lastSessionPct_ = -1;
+          lastSessionMute_ = false;
+          logLine(ducked ? "karaoke: windows player ducked to -54 dB, console carries the song"
+                         : "karaoke: no player session to duck yet, will keep trying");
+        }
+        // Log every change in what the duck reaches, so a WebView2 session that
+        // opens later does not slip through unnoticed.
+        if (note != lastDuckNote_) {
+          lastDuckNote_ = note;
+          logLine(("karaoke duck: " + json::Value::toUtf8(note)).c_str());
+        }
+        engine_.setMusicDuck(1.0f / kKaraokeBleed);
+      } else {
+        engine_.setMusicDuck(1.0f);
+        if (sessionDucked_) {
+          applyPlayerVolume(1.0f, false, &note);
+          sessionDucked_ = false;
+        }
+        if (lastSessionPct_ >= 0) {
+          // Leaving session control: hand the Windows level back to the user.
+          applyPlayerVolume(1.0f, false, &note);
+          lastSessionPct_ = -1;
+          lastSessionMute_ = false;
+        }
       }
       setMusicDirect(false, nullptr);
     } else {
+      engine_.setMusicDuck(1.0f);
+      if (sessionDucked_) {
+        // Hand the player back and stop monitoring the console copy in the same
+        // frame. Restoring the volume first and switching the monitor a couple
+        // of ticks later played the song twice - once straight from Windows and
+        // once from the console - which is the blast of "full volume" heard
+        // when karaoke is switched off.
+        sessionDucked_ = false;
+        sessionHit_ = 2;
+        sessionMiss_ = 0;
+        lastSessionPct_ = -1;
+        setMusicDirect(true, nullptr);
+        logLine("karaoke off: player restored, console copy stopped");
+      }
       const bool anySolo = params().getBool(P::MicSolo) || params().getBool(P::MusicSolo);
       const bool mute =
           params().getBool(P::MusicMute) || (anySolo && !params().getBool(P::MusicSolo));
@@ -1021,6 +1172,17 @@ void App::onPointerDown(float x, float y) {
     runAction(action);
     return;
   }
+  // Latching chips (IN / MUTE / SOLO / PHASE / EQ band dots) are switches, not
+  // faders. They used to fall through to the drag branch, so a click neither
+  // changed the value nor the colour. One click now flips them end to end.
+  if (h->kind == 2 && h->id >= 0 && h->id < kParamCount) {
+    const ParamInfo& info = kParams[h->id];
+    if (info.max - info.min <= 1.001f) {
+      const bool on = params().get((P)h->id) > (info.min + info.max) * 0.5f;
+      params().set((P)h->id, on ? info.min : info.max);
+      return;
+    }
+  }
   if (h->kind == 3 && h->id < kParamCount) {
     pendingAnchor_ = h->rect;
     if ((P)h->id == P::PreMode) {
@@ -1076,6 +1238,10 @@ void App::onPointerMove(float x, float y) {
 }
 
 void App::onPointerUp() {
+  if (dragId_ == (int)P::RecSync) {
+    settings_.recSyncMs = params().get(P::RecSync);
+    SettingsStore::save(settings_);
+  }
   dragId_ = -1;
   dragKind_ = -1;
 }

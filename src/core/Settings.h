@@ -31,6 +31,15 @@ struct AppSettings {
   // it on the Windows player. Only meaningful when karaoke and the console
   // output are different devices; see App::tick().
   bool musicThroughBus = false;
+  // Record bus alignment trim (P::RecSync), so a value the user dialled in is
+  // still there after a restart.
+  float recSyncMs = 0.0f;
+  // One-time reset of the SYNC trim so the alignment starts fully automatic
+  // for anyone who was given the old, hand-dialled value.
+  bool syncTrimMigrated = false;
+  // Song tempo and karaoke vocal cut, both remembered between sessions.
+  double playbackRate = 1.0;
+  bool karaoke = false;
   float windowScale = 1.0f;
 };
 

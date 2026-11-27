@@ -141,6 +141,55 @@ needs six consecutive misses (about 2.4 s). A track change or a re-created audio
 session therefore cannot flip the monitor path — and audibly change the music level
 — for a single polling interval.
 
+### Karaoke ducks the player, it does not mute it
+
+`KARAOKE` needs the player's audio inside the console, and the only route is the
+loopback capture of the endpoint. That capture sees only what a player actually
+renders, so muting the session takes the song away from the engine as well: with
+the player at 0 % the capture measures 0.0000 and the console is left with nothing
+to play and nothing to cut. The session is ducked to 0.2 % (−54 dB) instead, which
+keeps it rendering and captured (0.3000 → 0.0006 on the reference machine).
+
+The captured copy is then scaled straight back up. Because that gain would be
+catastrophic if the duck had not taken effect, the engine bounds it by the level the
+capture actually carries — target peak 0.25 — so a session still sitting at full
+volume is played at its own level rather than multiplied hundreds of times. WebView2
+opens new audio sessions as it runs and each fresh one starts at full volume, so the
+duck is re-applied every 400 ms and every change is logged:
+
+```
+karaoke duck: session volume: 1 of 4 player session(s) at 0.2%
+```
+
+Switching karaoke off restores the player and returns the monitor to the session in
+the same frame. Restoring the volume first and handing the monitor back two ticks
+later played the song twice — once from Windows, once from the console — which was
+audible as a jump to full volume.
+
+### The vocal cut
+
+The song that reaches the meter, the monitor and the recording tap after `KARAOKE`
+passes through a spectral centre canceller (`dsp/Effects.h`, `VocalCut`): 1024-point
+STFT, 75 % overlap, per-bin weighting that removes only what is centre-dominant, and
+a 180 Hz – 9.5 kHz band limit so the kick and bass line survive along with the
+sides. Depth is *Settings → VOCAL CUT DEPTH*; at 100 % the centre goes whatever it
+holds and at lower settings only clearly centre-dominant content is taken.
+
+Measured on a real take — 20 s of the same song, cut off against cut on, band by
+band on the centre channel:
+
+| band | removed | side kept |
+| --- | --- | --- |
+| sub / kick 30–90 Hz | 1.0 % | 99.9 % |
+| bass 90–250 Hz | 8.5 % | 99.8 % |
+| low-mid 250–500 Hz | 75.3 % | 99.8 % |
+| vocal 0.5–3 kHz | 84.4 % | 99.8 % |
+| presence 3–6 kHz | 96.7 % | 99.7 % |
+| air 8–16 kHz | 9.1 % | 99.7 % |
+
+The filter delays the song by one 21 ms frame; the recording alignment adds exactly
+that while karaoke is engaged, so the voice stays on the beat.
+
 ## What is deliberately not done
 
 * No audio is downloaded, buffered to disk, decoded or extracted from YouTube. The

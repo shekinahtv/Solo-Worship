@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <timeapi.h>
 #include <vector>
@@ -13,6 +14,8 @@
 namespace lvs {
 
 namespace {
+
+
 
 // Single-producer / single-consumer float frame ring.
 struct FrameRing {
@@ -69,6 +72,10 @@ struct Engine::Impl {
 
   std::vector<float> mic, send, wetL, wetR, musL, musR, mixL, mixR;
   std::vector<float> mwL, mwR, micMixL, micMixR, musOutL, musOutR, recInter;
+  std::vector<float> echoIn, echoL, echoR;
+  // Record bus: the vocal delayed onto the loopback song, plus the song itself.
+  std::vector<float> alignL, alignR, recVocalL, recVocalR, recL, recR;
+  int alignPos = 0;
   std::vector<uint8_t> outBytes;
   int maxBlock = 8192;
 
@@ -76,14 +83,21 @@ struct Engine::Impl {
   dsp::BritishEQ eq;
   dsp::Compressor comp;
   dsp::Reverb rev;
+  dsp::Echo echo;
   dsp::MusicEQ musEq;
+  dsp::VocalCut karaoke;
   dsp::Compressor busL, busR;
   dsp::Limiter limiter;
+  // The record bus keeps its own master stage, because in direct mode it holds
+  // the song while the monitor bus deliberately does not.
+  dsp::Compressor recBus;
+  dsp::Limiter recLimiter;
 
   bool dspReady = false;
   double sr = 48000.0;
   bool recordVocal = false;
   float inMeter = 0, outMeterL = 0, outMeterR = 0, musMeter = 0;
+  float makeup = 1.0f;  // karaoke make-up gain, measured from the capture
   float recPeakLocal = 0;
 
   void prepare(double sampleRate) {
@@ -92,10 +106,14 @@ struct Engine::Impl {
     eq.prepare(sr);
     comp.prepare(sr);
     rev.prepare(sr, maxBlock);
+    echo.prepare(sr);
     musEq.prepare(sr);
+    karaoke.prepare(sr);
     busL.prepare(sr);
     busR.prepare(sr);
     limiter.prepare(sr);
+    recBus.prepare(sr);
+    recLimiter.prepare(sr);
     mic.assign(maxBlock, 0.0f);
     send.assign(maxBlock, 0.0f);
     wetL.assign(maxBlock, 0.0f);
@@ -111,6 +129,19 @@ struct Engine::Impl {
     musOutL.assign(maxBlock, 0.0f);
     musOutR.assign(maxBlock, 0.0f);
     recInter.assign((size_t)maxBlock * 2, 0.0f);
+    echoIn.assign(maxBlock, 0.0f);
+    echoL.assign(maxBlock, 0.0f);
+    echoR.assign(maxBlock, 0.0f);
+    alignL.assign(maxBlock, 0.0f);
+    alignR.assign(maxBlock, 0.0f);
+    recVocalL.assign(maxBlock, 0.0f);
+    recVocalR.assign(maxBlock, 0.0f);
+    recL.assign(maxBlock, 0.0f);
+    recR.assign(maxBlock, 0.0f);
+    const size_t alignFrames = (size_t)(0.30 * sr) + 1;
+    if (alignL.size() < alignFrames) alignL.assign(alignFrames, 0.0f);
+    if (alignR.size() < alignFrames) alignR.assign(alignFrames, 0.0f);
+    alignPos = 0;
     outBytes.assign((size_t)maxBlock * 32 * 4, 0);
     dspReady = true;
   }
@@ -268,6 +299,28 @@ bool Engine::Start(const EngineConfig& inCfg, std::wstring* error) {
   captureOpen_.store(false);
   musicOpen_.store(false);
 
+  // Song path = output endpoint -> loopback capture. Measuring it is accurate
+  // but costs a second and one audible click, so the result is cached against
+  // the endpoint it was taken on and only re-taken when that endpoint changes.
+  measuredLoopMs_.store(0.0);
+  micLatMs_.store(0.0);
+  if (!cfg_.loopbackId.empty() && cfg_.musicEnabled) {
+    if (cfg_.latencyCacheMs > 0.0 && cfg_.latencyCacheId == cfg_.loopbackId) {
+      measuredLoopMs_.store(cfg_.latencyCacheMs);
+    } else {
+      std::wstring note;
+      const double measured = measureOutputLatencyMs(cfg_.loopbackId, &note);
+      if (measured > 0.0) {
+        measuredLoopMs_.store(measured);
+        cfg_.latencyCacheId = cfg_.loopbackId;
+        cfg_.latencyCacheMs = measured;
+      } else {
+        cfg_.latencyCacheId.clear();
+        cfg_.latencyCacheMs = 0.0;
+      }
+    }
+  }
+
   // 1 ms timer resolution so the polling exclusive path is steady.
   timeBeginPeriod(1);
   renderThread_ = std::thread([this] { renderLoop(); });
@@ -367,6 +420,11 @@ void Engine::renderLoop() {
       impl_->prepare((double)client.rate());
       impl_->limiter.reset();
       impl_->rev.reset();
+      impl_->echo.reset();
+      impl_->recLimiter.reset();
+      impl_->alignPos = 0;
+      std::fill(impl_->alignL.begin(), impl_->alignL.end(), 0.0f);
+      std::fill(impl_->alignR.begin(), impl_->alignR.end(), 0.0f);
       bufFrames_.store((int)client.bufferFrames());
       devCh_.store((int)client.channels());
       sr_.store((int)client.rate());
@@ -524,6 +582,56 @@ void Engine::renderLoop() {
 
 // Karaoke feed: fractional read with slow drift correction, so a playback
 // device on a different clock never over/underruns the ring.
+// The cushion pullMusic keeps in front of the read position, in frames. One
+// definition, because the recording alignment has to know the same number.
+int Engine::musicTargetFrames() const {
+  return (int)std::clamp<double>((double)cfg_.bufferFrames * 4.0 + 256.0, 512.0, 2048.0);
+}
+
+// The two signals in the recording arrive by different paths:
+//   song  : player -> output endpoint -> loopback capture client -> ring
+//           cushion waiting for the render thread.
+//   vocal : microphone -> capture client -> read straight away.
+// The song is therefore behind by (loopback latency + ring cushion) and the
+// vocal is already late by the microphone client's latency, so only the
+// difference has to be made up. Counting the render stream latency as well
+// double-booked the output stage and pushed the voice past the song - the same
+// skew the other way round. Whatever the devices still add on top is what the
+// SYNC trim is for.
+double Engine::recordOffsetMs() const {
+  const double rate = sr_.load() > 0 ? (double)sr_.load() : 48000.0;
+  return 1000.0 * (double)alignmentFrames() / rate;
+}
+
+int Engine::alignmentFrames() const {
+  const double rate = sr_.load() > 0 ? (double)sr_.load() : 48000.0;
+  const double ringMs = 1000.0 * (double)musicTargetFrames() / rate;
+  // Measured path when the impulse test worked, otherwise the loopback client's
+  // own report as a fallback.
+  const double measured = measuredLoopMs_.load();
+  double songMs;
+  if (measured > 0.0) {
+    // The impulse test ends when the capture client hands the burst over, which
+    // is one capture period after it was played. The ring still holds
+    // `ringFrames` of older audio, so only the difference is added on top.
+    const double periodMs = 1000.0 * (double)std::max(256, cfg_.bufferFrames) / rate;
+    songMs = measured + std::max(0.0, ringMs - periodMs);
+  } else {
+    songMs = musicLatMs_.load() + ringMs;
+  }
+  double ms = songMs - micLatMs_.load();
+  // The driver reports its converter latency optimistically and nothing models
+  // the air path from the singer to the capsule, so the voice landed a few
+  // milliseconds behind the track. This is the typical sum of both; the SYNC
+  // trim stays available on top of it.
+  ms -= 6.0;
+  // The vocal cut runs in the song path that the recorder taps, so its frame
+  // delay belongs to the song side of the alignment.
+  if (params_.getBool(P::KaraokeOn)) ms += 1000.0 * (double)impl_->karaoke.latencyFrames() / rate;
+  ms += (double)params_.get(P::RecSync);
+  return (int)std::clamp(ms * rate / 1000.0, 0.0, rate * 0.35);
+}
+
 void Engine::pullMusic(int frames) {
   Impl& I = *impl_;
   std::fill(I.musL.begin(), I.musL.begin() + frames, 0.0f);
@@ -533,8 +641,7 @@ void Engine::pullMusic(int frames) {
   const size_t cap = I.musicRing.capacity();
   // A few render blocks of cushion. The old quarter-buffer target held the song
   // ~85 ms behind the picture at 128 frames.
-  const double target =
-      std::clamp<double>((double)cfg_.bufferFrames * 4.0 + 256.0, 512.0, 2048.0);
+  const double target = (double)musicTargetFrames();
   if (!I.musicPosInit) {
     I.musicPos = std::max(0.0, (double)written - target);
     I.musicPosInit = true;
@@ -602,11 +709,19 @@ void Engine::asioLoop() {
       impl_->prepare((double)ae.sampleRate());
       impl_->rev.reset();
       impl_->limiter.reset();
+      impl_->echo.reset();
+      impl_->recLimiter.reset();
+      impl_->alignPos = 0;
+      std::fill(impl_->alignL.begin(), impl_->alignL.end(), 0.0f);
+      std::fill(impl_->alignR.begin(), impl_->alignR.end(), 0.0f);
       impl_->micRing.reset();
       impl_->musicRing.reset();
       impl_->musicPosInit = false;
       impl_->micPos = 0;
       sr_.store(ae.sampleRate());
+      // The voice reaches the record bus through the driver with this much
+      // delay, which the song side does not share.
+      micLatMs_.store(ae.inputLatencyMs());
       bufFrames_.store(ae.bufferSize());
       devCh_.store(ae.outputChannels());
       bufLat_.store(1000.0 * ae.bufferSize() / (double)ae.sampleRate());
@@ -707,6 +822,7 @@ void Engine::captureLoop() {
       impl_->micRing.reset();
       impl_->micPos = 0;
       client.Start();
+      micLatMs_.store(client.streamLatencyMs());
       captureOpen_.store(true);
       SetThreadPriority(GetCurrentThread(), client.eventDriven() ? THREAD_PRIORITY_TIME_CRITICAL
                                                                 : THREAD_PRIORITY_HIGHEST);
@@ -794,6 +910,9 @@ void Engine::musicLoop() {
       const double engineRate = sr_.load() > 0 ? (double)sr_.load() : (double)cfg_.sampleRate;
       impl_->musicRate.store((double)client.rate() / engineRate);
       client.Start();
+      // Recorded later in the alignment estimate, so the vocal can be shifted
+      // onto the loopback copy of the song.
+      musicLatMs_.store(client.streamLatencyMs());
       musicOpen_.store(true);
       fails = 0;
       continue;
@@ -864,9 +983,21 @@ void Engine::process(float* mic, const float* musicL, const float* musicR, float
   // --- Reverb send ---------------------------------------------------------
   const float send = params_.getBool(P::RevOn) ? params_.get(P::RevSend) : 0.0f;
   I.rev.setParams(params_);
-  I.rev.setEarlyMix(params_.get(P::RevEarly));
   for (int i = 0; i < n; ++i) I.send[i] = mic[i] * send;
   I.rev.process(I.send.data(), I.wetL.data(), I.wetR.data(), n);
+
+  // --- Echo send -----------------------------------------------------------
+  const bool echoOn = params_.getBool(P::EchoOn) && params_.get(P::EchoMix) > 0.001f;
+  I.echo.setParams(echoOn, params_.get(P::EchoTime), params_.get(P::EchoFb),
+                   params_.get(P::EchoMix), params_.get(P::EchoTone),
+                   params_.get(P::EchoSpread));
+  if (echoOn) {
+    std::memcpy(I.echoIn.data(), mic, sizeof(float) * (size_t)n);
+    I.echo.process(I.echoIn.data(), I.echoL.data(), I.echoR.data(), n);
+  } else {
+    std::fill(I.echoL.begin(), I.echoL.begin() + n, 0.0f);
+    std::fill(I.echoR.begin(), I.echoR.begin() + n, 0.0f);
+  }
 
   // --- Music EQ ------------------------------------------------------------
   I.musEq.setParams(params_.get(P::MusEqLow), params_.get(P::MusEqMid), params_.get(P::MusEqHigh),
@@ -891,7 +1022,34 @@ void Engine::process(float* mic, const float* musicL, const float* musicR, float
   // Copy music into the working stereo buffer so the EQ can go in place.
   std::memcpy(I.mwL.data(), musicL, sizeof(float) * (size_t)n);
   std::memcpy(I.mwR.data(), musicR, sizeof(float) * (size_t)n);
+  // Karaoke make-up. The player is ducked so the loopback keeps capturing; this
+  // puts the level back. The gain is bounded by what the capture really holds,
+  // so a player session that is still at full volume - a WebView2 process that
+  // appeared after the duck was applied, or one the duck missed - can never be
+  // boosted hundreds of times into the bus. That was the blast of loud, harsh
+  // high-mid when karaoke came on.
+  const float duck = musicDuck_.load(std::memory_order_relaxed);
+  if (duck != 1.0f) {
+    const float capturedPeak = std::max(peakOf(musicL, n), peakOf(musicR, n));
+    float want = duck;
+    if (capturedPeak > 1e-6f) want = std::min(duck, std::max(1.0f, 0.25f / capturedPeak));
+    const double rate = sr_.load() > 0 ? (double)sr_.load() : 48000.0;
+    const float ms = want < I.makeup ? 30.0f : 400.0f;
+    const float coef = 1.0f - std::exp(-(float)n / (float)(ms * 0.001 * rate));
+    I.makeup += (want - I.makeup) * coef;
+    for (int i = 0; i < n; ++i) {
+      I.mwL[i] *= I.makeup;
+      I.mwR[i] *= I.makeup;
+    }
+  } else if (I.makeup != 1.0f) {
+    I.makeup = 1.0f;
+  }
   I.musEq.process(I.mwL.data(), I.mwR.data(), n);
+
+  // Karaoke: cut the centre vocal before the song reaches the meter, the
+  // monitor bus and the recording tap.
+  I.karaoke.setOn(params_.getBool(P::KaraokeOn), params_.get(P::KaraokeDepth));
+  I.karaoke.process(I.mwL.data(), I.mwR.data(), n);
   const float musPeak = std::max(peakOf(I.mwL.data(), n), peakOf(I.mwR.data(), n));
   musicPeak_.store(meterFollow(musicPeak_.load(), musPeak, 0.90f));
 
@@ -901,10 +1059,19 @@ void Engine::process(float* mic, const float* musicL, const float* musicR, float
   // only feeds the meter and the recording tap.
   const bool monitorMusic = !musicDirect_.load();
 
+  // In direct mode the MUSIC fader has already set the Windows player's own
+  // session volume, so the captured copy arrives at that level. Scaling it a
+  // second time by the fader squared the setting and left the song far quieter
+  // than the voice in the file.
+  const float recMusicGain = monitorMusic ? musGain : 1.0f;
+
   for (int i = 0; i < n; ++i) {
     const float dry = mic[i] * micGain;
-    I.micMixL[i] = dry * ml + I.wetL[i] * micGain;
-    I.micMixR[i] = dry * mr + I.wetR[i] * micGain;
+    // Reverb and echo are returns on the vocal, so they follow its pan.
+    const float voxL = dry + I.wetL[i] * micGain + I.echoL[i] * micGain;
+    const float voxR = dry + I.wetR[i] * micGain + I.echoR[i] * micGain;
+    I.micMixL[i] = voxL * ml;
+    I.micMixR[i] = voxR * mr;
     I.musOutL[i] = I.mwL[i] * musGain * xl;
     I.musOutR[i] = I.mwR[i] * musGain * xr;
     outL[i] = I.micMixL[i] + (monitorMusic ? I.musOutL[i] : 0.0f);
@@ -917,13 +1084,13 @@ void Engine::process(float* mic, const float* musicL, const float* musicR, float
   const float balL = bal <= 0.0f ? 1.0f : 1.0f - bal;
   const float balR = bal >= 0.0f ? 1.0f : 1.0f + bal;
 
-  if (params_.getBool(P::MasterCompOn)) {
-    I.busL.setParams(params_.get(P::MasterCompThr), params_.get(P::MasterCompRatio), 15.0f, 220.0f,
-                     6.0f, 0.0f, 1.0f, true);
-    I.busR.setParams(params_.get(P::MasterCompThr), params_.get(P::MasterCompRatio), 15.0f, 220.0f,
-                     6.0f, 0.0f, 1.0f, true);
-    I.busL.process(outL, n);
-    I.busR.process(outR, n);
+  const bool busCompOn = params_.getBool(P::MasterCompOn);
+  const float busThr = params_.get(P::MasterCompThr);
+  const float busRatio = params_.get(P::MasterCompRatio);
+  if (busCompOn) {
+    // Linked, so the phantom centre of the mix does not drift as it rides.
+    I.busL.setParams(busThr, busRatio, 15.0f, 220.0f, 6.0f, 0.0f, 1.0f, true);
+    I.busL.processLinked(outL, outR, n);
   }
 
   for (int i = 0; i < n; ++i) {
@@ -944,21 +1111,61 @@ void Engine::process(float* mic, const float* musicL, const float* musicR, float
   }
 
   // --- Recording tap -------------------------------------------------------
-  if (recorder_.active()) {
+  // The monitor bus carries the vocal only in direct mode, so a master
+  // recording of that mode needs its own complete mix: the vocal, shifted onto
+  // the loopback copy of the song, plus the song at its own level.
+  // A master recording always comes from this bus, in both monitor modes: the
+  // monitor mix has the song where the loopback delivered it (late against the
+  // voice), so recording that mix was the source of the drift.
+  const bool recordBus = recorder_.active() && !I.recordVocal;
+  if (recordBus) {
+    const int sz = (int)I.alignL.size();
+    const int align = std::min(alignmentFrames(), sz - 1);
     for (int i = 0; i < n; ++i) {
-      float l = I.recordVocal ? mic[i] : outL[i];
-      float r = I.recordVocal ? mic[i] : outR[i];
-      if (!I.recordVocal && !monitorMusic) {
-        // The monitor bus carries the vocal only in direct mode; a master
-        // recording still has to contain the song.
-        l += I.musOutL[i] * master * balL;
-        r += I.musOutR[i] * master * balR;
+      I.alignL[(size_t)I.alignPos] = I.micMixL[i];
+      I.alignR[(size_t)I.alignPos] = I.micMixR[i];
+      int r = I.alignPos - align;
+      while (r < 0) r += sz;
+      I.recVocalL[i] = I.alignL[(size_t)r];
+      I.recVocalR[i] = I.alignR[(size_t)r];
+      I.alignPos = (I.alignPos + 1) % sz;
+    }
+    for (int i = 0; i < n; ++i) {
+      I.recL[i] = I.recVocalL[i] + I.mwL[i] * recMusicGain * xl;
+      I.recR[i] = I.recVocalR[i] + I.mwR[i] * recMusicGain * xr;
+    }
+    if (busCompOn) {
+      I.recBus.setParams(busThr, busRatio, 15.0f, 220.0f, 6.0f, 0.0f, 1.0f, true);
+      I.recBus.processLinked(I.recL.data(), I.recR.data(), n);
+    }
+    for (int i = 0; i < n; ++i) {
+      I.recL[i] *= master * balL;
+      I.recR[i] *= master * balR;
+    }
+    I.recLimiter.process(I.recL.data(), I.recR.data(), n, 0.944f,
+                         params_.getBool(P::LimiterOn));
+  }
+
+  if (recorder_.active()) {
+    if (I.recordVocal) {
+      for (int i = 0; i < n; ++i) {
+        I.recInter[(size_t)i * 2] = mic[i];
+        I.recInter[(size_t)i * 2 + 1] = mic[i];
       }
-      I.recInter[(size_t)i * 2] = l;
-      I.recInter[(size_t)i * 2 + 1] = r;
+    } else if (recordBus) {
+      for (int i = 0; i < n; ++i) {
+        I.recInter[(size_t)i * 2] = I.recL[i];
+        I.recInter[(size_t)i * 2 + 1] = I.recR[i];
+      }
+    } else {
+      for (int i = 0; i < n; ++i) {
+        I.recInter[(size_t)i * 2] = outL[i];
+        I.recInter[(size_t)i * 2 + 1] = outR[i];
+      }
     }
     recorder_.push(I.recInter.data(), n, 2);
-    const float pk = std::max(peakOf(outL, n), peakOf(outR, n));
+    const float pk = recordBus ? std::max(peakOf(I.recL.data(), n), peakOf(I.recR.data(), n))
+                               : std::max(peakOf(outL, n), peakOf(outR, n));
     recPeak_.store(meterFollow(recPeak_.load(), pk, 0.9f));
   }
 }
@@ -1000,6 +1207,11 @@ double Engine::measureOutputLatencyMs(const std::wstring& renderId, std::wstring
 
   while (sent < total) {
     WaitForSingleObject(rev, 100);
+    // Never let a silent endpoint hold the engine start hostage.
+    LARGE_INTEGER nowCheck;
+    QueryPerformanceCounter(&nowCheck);
+    if ((double)(nowCheck.QuadPart - tStart.QuadPart) * 1000.0 / (double)freq.QuadPart > 1200.0)
+      break;
     BYTE* data = nullptr;
     UINT32 frames = 0;
     if (out.GetRenderBuffer(&data, &frames) == S_OK && data && frames > 0) {
@@ -1007,8 +1219,10 @@ double Engine::measureOutputLatencyMs(const std::wstring& renderId, std::wstring
       for (UINT32 i = 0; i < frames; ++i) {
         const int idx = sent + (int)i;
         float v = 0.0f;
-        if (idx >= burstStart && idx < burstStart + 480) {
-          v = 0.35f * std::sin(2.0f * dsp::kPi * 1000.0f * (float)(idx - burstStart) / 48000.0f);
+        if (idx >= burstStart && idx < burstStart + 384) {
+          // Loud enough to stand above whatever else is playing: a missed
+          // impulse would otherwise be taken for a zero-latency result.
+          v = 0.5f * std::sin(2.0f * dsp::kPi * 1000.0f * (float)(idx - burstStart) / 48000.0f);
         }
         f[i * 2] = v;
         f[i * 2 + 1] = v;
@@ -1033,7 +1247,7 @@ double Engine::measureOutputLatencyMs(const std::wstring& renderId, std::wstring
                              lb.bytesPerSample(), lb.isFloat(), captureBuf.data());
         for (UINT32 i = 0; i < std::min<UINT32>(cframes, 4096) * 2; ++i)
           pk = std::max(pk, std::fabs(captureBuf[i]));
-        if (pk > 0.05f) {
+        if (pk > 0.32f) {
           LARGE_INTEGER now;
           QueryPerformanceCounter(&now);
           const double ms = (double)(now.QuadPart - burstTime.QuadPart) * 1000.0 / (double)freq.QuadPart;

@@ -10,6 +10,7 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <string>
@@ -249,8 +250,8 @@ void YouTubeHost::navigate() {
   if (!webview_) return;
   if (videoId_.empty() && playlistId_.empty()) return;
   char url[512];
-  snprintf(url, sizeof(url), "https://lvs.local/player.html?v=%s&list=%s&autoplay=%d",
-           videoId_.c_str(), playlistId_.c_str(), autoplay_ ? 1 : 0);
+  snprintf(url, sizeof(url), "https://lvs.local/player.html?v=%s&list=%s&autoplay=%d&rate=%.3f",
+           videoId_.c_str(), playlistId_.c_str(), autoplay_ ? 1 : 0, rate_);
   const std::wstring wurl(url, url + strlen(url));
   ((ICoreWebView2*)webview_)->Navigate(wurl.c_str());
 }
@@ -261,6 +262,17 @@ void YouTubeHost::play() {
 
 void YouTubeHost::pause() {
   eval("(function(){if(ready&&player){player.pauseVideo();}})();");
+}
+
+void YouTubeHost::setPlaybackRate(double rate) {
+  // The embed offers 0.25 - 2.0; anything outside that is ignored by the API.
+  rate_ = std::clamp(rate, 0.25, 2.0);
+  char js[192];
+  snprintf(js, sizeof(js),
+           "(function(){if(ready&&player&&player.setPlaybackRate){"
+           "try{player.setPlaybackRate(%.3f);}catch(e){}}})();",
+           rate_);
+  eval(js);
 }
 
 void YouTubeHost::seekTo(double seconds) {

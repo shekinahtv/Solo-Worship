@@ -59,6 +59,13 @@
   X(Reverb, RevEarly,    "rev.early",  "EARLY",       0.0f,    1.0f,    0.35f, "")                \
   X(Reverb, RevHf,       "rev.hfdamp", "HF DAMP",     0.0f,    1.0f,    0.45f, "")                \
   X(Reverb, RevLf,       "rev.lfdamp", "LF DAMP",     0.0f,    1.0f,    0.30f, "")                \
+  /* --- Echo / delay ------------------------------------------------------ */                     \
+  X(Echo,   EchoOn,      "echo.on",    "IN",          0.0f,    1.0f,    0.0f,  "")                \
+  X(Echo,   EchoTime,    "echo.time",  "TIME",       40.0f, 1200.0f,  320.0f,  "ms")              \
+  X(Echo,   EchoFb,      "echo.fb",    "FEEDBACK",    0.0f,    0.90f,   0.32f, "")                \
+  X(Echo,   EchoMix,     "echo.mix",   "MIX",         0.0f,    1.0f,    0.0f,  "")                \
+  X(Echo,   EchoTone,    "echo.tone",  "TONE",        0.0f,    1.0f,    0.45f, "")                \
+  X(Echo,   EchoSpread,  "echo.spread","SPREAD",      0.0f,    1.0f,    0.60f, "")                \
   /* --- Mixer ------------------------------------------------------------- */                     \
   X(Mixer,  MicFader,    "mix.mic",    "MIC",         0.0f,    1.5f,    0.78f, "")                \
   X(Mixer,  MicMute,     "mix.mic.mute","MUTE",       0.0f,    1.0f,    0.0f,  "")                \
@@ -75,6 +82,10 @@
   X(Mixer,  MasterCompOn,"mix.mcomp",  "BUS COMP",    0.0f,    1.0f,    0.0f,  "")                \
   X(Mixer,  MasterCompThr,"mix.mcomp.thr","THRESH", -40.0f,    0.0f,  -12.0f,  "dB")              \
   X(Mixer,  MasterCompRatio,"mix.mcomp.ratio","RATIO",1.0f,  10.0f,    2.5f,  ":1")               \
+  X(Mixer,  KaraokeOn,   "mix.karaoke","KARAOKE",     0.0f,    1.0f,    0.0f,  "")                \
+  X(Mixer,  KaraokeDepth,"mix.karaoke.depth","VOCAL CUT",0.0f,   1.0f,    1.0f,  "")                \
+  /* --- Recording --------------------------------------------------------- */                     \
+  X(Recorder, RecSync,   "rec.sync",   "SYNC",     -300.0f,  300.0f,    0.0f,  "ms")              \
   /* --- Music EQ ---------------------------------------------------------- */                     \
   X(MusEq,  MusEqOn,     "museq.on",   "EQ IN",       0.0f,    1.0f,    1.0f,  "")                \
   X(MusEq,  MusEqLow,    "museq.low",  "LOW",       -12.0f,   12.0f,    0.0f,  "dB")              \
